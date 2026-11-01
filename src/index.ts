@@ -62,7 +62,7 @@ export default Plugin.define({
 
 		// --- session context hook: capture model + a rough context size ---
 		try {
-			const reg = ctx.session.hook('context', (c: any) => {
+			const reg = ctx.session.hook('context', async (c: any) => {
 				try {
 					const sid = c?.sessionID ?? ''
 					if (sid) {
@@ -76,37 +76,78 @@ export default Plugin.define({
 						// rough token estimate from messages length
 						const msgs = Array.isArray(c?.messages) ? c.messages : []
 						const sys = Array.isArray(c?.system) ? c.system : []
-						const est =
-							msgs.reduce(
-								(n: number, m: any) => n + (typeof m?.content === 'string' ? m.content.length : 0),
-								0,
-							) +
-							sys.reduce(
-								(n: number, s: any) =>
-									n +
-									(typeof s?.content === 'string'
-										? s.content.length
-										: typeof s === 'string'
-											? s.length
-											: 0),
-								0,
-							)
-						const ctxTokens = Math.round(est / 4)
+						const getLen = (v: any): number => {
+							if (typeof v === 'string') return v.length
+							if (Array.isArray(v)) return v.reduce((a: number, b: any) => a + getLen(b), 0)
+							if (v && typeof v === 'object') {
+								if (typeof v.content === 'string') return v.content.length
+								if (Array.isArray(v.content))
+									return v.content.reduce((a: number, b: any) => a + getLen(b), 0)
+								if (typeof v.text === 'string') return v.text.length
+								if (typeof v.value === 'string') return v.value.length
+							}
+							return 0
+						}
+						let user = 0,
+							assistant = 0,
+							reasoning = 0,
+							toolArgs = 0,
+							toolOut = 0
+						for (const m of msgs) {
+							const role = String(m?.role ?? m?.type ?? '').toLowerCase()
+							const len = getLen(m)
+							if (role.includes('user')) user += len
+							else if (role.includes('assistant')) assistant += len
+							else if (role.includes('thought') || role.includes('reason')) reasoning += len
+							else if (role.includes('tool')) {
+								if (role.includes('call') || role.includes('args')) toolArgs += len
+								else toolOut += len
+							}
+						}
+						const system = sys.reduce((n: number, s: any) => n + getLen(s), 0)
+						const est = getLen(msgs) + system
+						const ctxTokens = Math.max(1, Math.round(est / 4))
+						const usable = Math.max(ctxTokens, 4096)
+						let modelID = String(
+							c?.model?.id ?? c?.model?.modelID ?? sessionModel.get(sid)?.modelID ?? '',
+						)
+						let agent = String(c?.agent ?? sessionAgent.get(sid) ?? '')
+						if (
+							(!modelID || modelID === 'undefined') &&
+							ctx?.session &&
+							typeof (ctx.session as any).get === 'function'
+						) {
+							try {
+								const s: any = await (ctx.session as any).get({ sessionID: sid })
+								const data = s?.data ?? s
+								if (!agent) agent = String(data?.agent ?? data?.agentID ?? '')
+								if (!modelID || modelID === 'undefined') {
+									modelID = String(data?.model?.id ?? data?.modelID ?? data?.currentModel?.id ?? '')
+								}
+								if (modelID && modelID !== 'undefined') {
+									sessionModel.set(sid, {
+										modelID,
+										providerID: data?.model?.providerID ?? sessionModel.get(sid)?.providerID ?? '',
+									})
+								}
+								if (agent) sessionAgent.set(sid, agent)
+							} catch {}
+						}
 						contextRows.set(sid, {
 							sessionID: sid,
 							parentID: '',
-							agent: String(c?.agent ?? sessionAgent.get(sid) ?? ''),
-							modelID: String(c?.model?.id ?? sessionModel.get(sid)?.modelID ?? ''),
+							agent: agent || '',
+							modelID: modelID || 'unknown',
 							ctx: ctxTokens,
 							input: ctxTokens,
-							usable: 0,
-							reserve: 0,
-							user: 0,
-							assistant: 0,
-							reasoning: 0,
-							toolArgs: 0,
-							toolOut: 0,
-							system: 0,
+							usable,
+							reserve: Math.round(usable * 0.1),
+							user: Math.round(user / 4),
+							assistant: Math.round(assistant / 4),
+							reasoning: Math.round(reasoning / 4),
+							toolArgs: Math.round(toolArgs / 4),
+							toolOut: Math.round(toolOut / 4),
+							system: Math.round(system / 4),
 							toolSchemas: 0,
 							other: 0,
 							source: 'estimate',
@@ -188,10 +229,10 @@ export default Plugin.define({
 									modelID:
 										sessionModel.get(sid)?.modelID ??
 										String(e?.data?.model?.id ?? e?.data?.modelID ?? ''),
-									ctx: 0,
-									input: 0,
-									usable: 0,
-									reserve: 0,
+									ctx: 1,
+									input: 1,
+									usable: 4096,
+									reserve: 409,
 									user: 0,
 									assistant: 0,
 									reasoning: 0,
@@ -234,10 +275,10 @@ export default Plugin.define({
 							parentID: '',
 							agent: sessionAgent.get(sid) ?? '',
 							modelID: sessionModel.get(sid)?.modelID ?? '',
-							ctx: 0,
-							input: 0,
-							usable: 0,
-							reserve: 0,
+							ctx: 1,
+							input: 1,
+							usable: 4096,
+							reserve: 409,
 							user: 0,
 							assistant: 0,
 							reasoning: 0,
@@ -358,15 +399,39 @@ export default Plugin.define({
 							}
 						}
 						if (!row && sid) {
+							let modelID = sessionModel.get(sid)?.modelID ?? ''
+							let agent = sessionAgent.get(sid) ?? ''
+							try {
+								if (
+									(!modelID || !agent) &&
+									ctx?.session &&
+									typeof (ctx.session as any).get === 'function'
+								) {
+									const s: any = await (ctx.session as any).get({ sessionID: sid })
+									const data = s?.data ?? s
+									if (!agent) agent = String(data?.agent ?? data?.agentID ?? '')
+									if (!modelID) {
+										modelID = String(
+											data?.model?.id ?? data?.modelID ?? data?.currentModel?.id ?? '',
+										)
+									}
+									if (agent) sessionAgent.set(sid, agent)
+									if (modelID && !sessionModel.get(sid)?.modelID) {
+										sessionModel.set(sid, { modelID, providerID: data?.model?.providerID ?? '' })
+									}
+								}
+							} catch (err) {
+								logErr('session get failed', err)
+							}
 							row = {
 								sessionID: sid,
 								parentID: '',
-								agent: sessionAgent.get(sid) ?? '',
-								modelID: sessionModel.get(sid)?.modelID ?? '',
-								ctx: 0,
-								input: 0,
-								usable: 0,
-								reserve: 0,
+								agent,
+								modelID: modelID || 'unknown',
+								ctx: 1,
+								input: 1,
+								usable: 4096,
+								reserve: 409,
 								user: 0,
 								assistant: 0,
 								reasoning: 0,
@@ -378,6 +443,34 @@ export default Plugin.define({
 								source: 'fallback',
 								updatedAt: now(),
 								stale: false,
+							}
+							contextRows.set(sid, row)
+						} else if (row && (row.modelID === '' || row.modelID === 'unknown')) {
+							let modelID = sessionModel.get(sid)?.modelID ?? row.modelID
+							let agent = sessionAgent.get(sid) ?? row.agent
+							try {
+								if (ctx?.session && typeof (ctx.session as any).get === 'function') {
+									const s: any = await (ctx.session as any).get({ sessionID: sid })
+									const data = s?.data ?? s
+									if (!agent || agent === '') agent = String(data?.agent ?? data?.agentID ?? agent)
+									if (!modelID || modelID === '' || modelID === 'unknown') {
+										modelID = String(
+											data?.model?.id ?? data?.modelID ?? data?.currentModel?.id ?? modelID,
+										)
+									}
+									if (agent) sessionAgent.set(sid, agent)
+									if (modelID && modelID !== 'unknown' && !sessionModel.get(sid)?.modelID) {
+										sessionModel.set(sid, { modelID, providerID: data?.model?.providerID ?? '' })
+									}
+								}
+							} catch (err) {
+								logErr('session get failed', err)
+							}
+							row = {
+								...row,
+								agent: agent || row.agent,
+								modelID: modelID || 'unknown',
+								updatedAt: now(),
 							}
 							contextRows.set(sid, row)
 						}
