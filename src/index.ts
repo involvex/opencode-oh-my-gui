@@ -64,6 +64,38 @@ export default Plugin.define({
 		try {
 			const reg = ctx.session.hook('context', async (c: any) => {
 				try {
+					console.log(
+						'[@involvex/oh-my-gui] context hook fired, keys:',
+						Object.keys(c ?? {}),
+						'msgs:',
+						Array.isArray(c?.messages) ? c.messages.length : 'n/a',
+						'sid:',
+						c?.sessionID,
+					)
+					if (Array.isArray(c?.messages) && c.messages.length > 0) {
+						const m0 = c.messages[0]
+						console.log(
+							'[@involvex/oh-my-gui] first msg keys:',
+							Object.keys(m0 ?? {}),
+							'role:',
+							m0?.role,
+							'content type:',
+							typeof m0?.content,
+							Array.isArray(m0?.content) ? m0.content.length : m0?.content,
+						)
+						if (Array.isArray(m0?.content) && m0.content.length > 0) {
+							console.log(
+								'[@involvex/oh-my-gui] first part:',
+								JSON.stringify(m0.content[0]).slice(0, 300),
+							)
+						}
+					}
+					if (c?.system)
+						console.log(
+							'[@involvex/oh-my-gui] system type:',
+							typeof c.system,
+							Array.isArray(c.system) ? c.system.length : c.system,
+						)
 					const sid = c?.sessionID ?? ''
 					if (sid) {
 						if (c?.agent) sessionAgent.set(sid, String(c.agent))
@@ -473,32 +505,61 @@ export default Plugin.define({
 					context: async (input: any) => {
 						const sid = String(input?.sessionID ?? '')
 						let row = contextRows.get(sid)
-						if (!row) {
+						// If no row or empty measurement, try to build one from session messages
+						if (!row || (row.ctx ?? 0) <= 1) {
 							try {
 								if (ctx?.session && typeof (ctx.session as any).context === 'function') {
 									const res: any = await (ctx.session as any).context({ sessionID: sid })
-									const data = res?.data ?? res
-									if (data) {
+									const msgs = Array.isArray(res)
+										? res
+										: Array.isArray(res?.data)
+											? res.data
+											: Array.isArray(res?.messages)
+												? res.messages
+												: []
+									if (msgs.length > 0) {
+										const genericLen = (v: any): number => {
+											if (v == null) return 0
+											if (typeof v === 'string') return v.length
+											if (Array.isArray(v))
+												return v.reduce((a: number, b: any) => a + genericLen(b), 0)
+											if (typeof v === 'object') {
+												let n = 0
+												for (const k of Object.keys(v)) {
+													if (
+														k === 'id' ||
+														k === 'type' ||
+														k === 'role' ||
+														k === 'time' ||
+														k === 'metadata'
+													)
+														continue
+													n += genericLen((v as any)[k])
+												}
+												return n
+											}
+											return 0
+										}
+										const totalChars = msgs.reduce((a: number, m: any) => a + genericLen(m), 0)
+										const ctxTokens = Math.max(1, Math.round(totalChars / 4))
 										row = {
 											sessionID: sid,
-											parentID: data?.parentID ?? '',
-											agent: String(data?.agent ?? sessionAgent.get(sid) ?? ''),
-											modelID: String(
-												data?.model?.id ?? data?.modelID ?? sessionModel.get(sid)?.modelID ?? '',
-											),
-											ctx: Number(data?.context?.tokens ?? data?.tokens?.context ?? data?.ctx ?? 0),
-											input: Number(data?.context?.input ?? data?.input ?? 0),
-											usable: Number(data?.context?.usable ?? data?.usable ?? 0),
-											reserve: Number(data?.context?.reserve ?? data?.reserve ?? 0),
-											user: Number(data?.tokens?.user ?? data?.user ?? 0),
-											assistant: Number(data?.tokens?.assistant ?? data?.assistant ?? 0),
-											reasoning: Number(data?.tokens?.reasoning ?? data?.reasoning ?? 0),
-											toolArgs: Number(data?.tokens?.toolArgs ?? data?.toolArgs ?? 0),
-											toolOut: Number(data?.tokens?.toolOut ?? data?.toolOut ?? 0),
-											system: Number(data?.tokens?.system ?? data?.system ?? 0),
-											toolSchemas: Number(data?.tokens?.toolSchemas ?? data?.toolSchemas ?? 0),
-											other: Number(data?.tokens?.other ?? data?.other ?? 0),
-											source: 'api',
+											parentID: '',
+											agent: sessionAgent.get(sid) ?? '',
+											modelID: sessionModel.get(sid)?.modelID ?? 'unknown',
+											ctx: ctxTokens,
+											input: ctxTokens,
+											usable: Math.max(ctxTokens, 4096),
+											reserve: Math.round(Math.max(ctxTokens, 4096) * 0.1),
+											user: 0,
+											assistant: 0,
+											reasoning: 0,
+											toolArgs: 0,
+											toolOut: 0,
+											system: 0,
+											toolSchemas: 0,
+											other: ctxTokens,
+											source: 'session-messages',
 											updatedAt: now(),
 											stale: false,
 										}
@@ -506,7 +567,7 @@ export default Plugin.define({
 									}
 								}
 							} catch (err) {
-								logErr('context api fetch failed', err)
+								logErr('session context fetch failed', err)
 							}
 						}
 						if (!row && sid) {
