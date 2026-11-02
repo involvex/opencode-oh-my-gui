@@ -4,16 +4,34 @@ import { usePlugin } from '@opencode/plugin/gui'
 import type { MountedSession } from '@opencode/plugin/gui'
 import { DashboardRpc } from '../rpc'
 
-const CATEGORIES = [
-	['system', 'System'],
-	['toolSchemas', 'Tool schemas'],
-	['user', 'User'],
-	['assistant', 'Assistant'],
-	['reasoning', 'Reasoning'],
-	['toolArgs', 'Tool args'],
-	['toolOut', 'Tool output'],
-	['other', 'Other'],
+/** key on the row, label, accent color */
+const SERIES = [
+	['system', 'System', '#60a5fa'],
+	['toolSchemas', 'Tool schemas', '#a78bfa'],
+	['user', 'User', '#34d399'],
+	['assistant', 'Assistant', '#22d3ee'],
+	['reasoning', 'Reasoning', '#f472b6'],
+	['toolArgs', 'Tool args', '#fbbf24'],
+	['toolOut', 'Tool output', '#fb923c'],
+	['other', 'Other', '#94a3b8'],
 ] as const
+
+const CARD = {
+	display: 'flex',
+	'flex-direction': 'column',
+	gap: '8px',
+	padding: '10px',
+	'border-radius': '8px',
+	border: '1px solid rgba(255,255,255,0.08)',
+	'background-color': 'rgba(255,255,255,0.02)',
+} as const
+
+const TRACK = {
+	width: '100%',
+	'border-radius': '999px',
+	'background-color': 'rgba(255,255,255,0.07)',
+	overflow: 'hidden',
+} as const
 
 export function ContextView(props: { session: MountedSession }) {
 	const ctx = usePlugin()
@@ -54,7 +72,12 @@ export function ContextView(props: { session: MountedSession }) {
 	})
 
 	const root = () => rows()[0]
-	const fmt = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
+	const fmt = (n: number) =>
+		n >= 1_000_000
+			? `${(n / 1_000_000).toFixed(2)}M`
+			: n >= 1000
+				? `${(n / 1000).toFixed(1)}k`
+				: String(Math.round(n))
 
 	return (
 		<div style={{ display: 'flex', 'flex-direction': 'column', gap: '10px' }}>
@@ -77,22 +100,74 @@ export function ContextView(props: { session: MountedSession }) {
 				>
 					{(row) => {
 						const used = row().ctx || 0
-						const total = row().usable || 1
-						const pct = Math.min(100, Math.max(0, (used / total) * 100))
-						const tone = pct >= 85 ? '#f87171' : pct >= 65 ? '#fbbf24' : '#22c55e'
+						const total = row().usable || 0
+						const hasTotal = total > 0
+						const pct = hasTotal ? (used / total) * 100 : null
+						const width = pct === null ? 0 : Math.min(100, Math.max(0, pct))
+						const tone =
+							pct === null ? '#64748b' : pct >= 90 ? '#f87171' : pct >= 70 ? '#fbbf24' : '#22c55e'
+						const pctLabel = pct === null ? 'n/a' : `${pct.toFixed(0)}%`
 						return (
 							<>
-								<div
-									style={{
-										display: 'flex',
-										'flex-direction': 'column',
-										gap: '6px',
-										padding: '10px',
-										'border-radius': '8px',
-										border: '1px solid var(--border, rgba(255,255,255,0.1))',
-										'background-color': 'var(--surface, rgba(255,255,255,0.02))',
-									}}
-								>
+								{/* --- usage card --- */}
+								<div style={CARD}>
+									<div
+										style={{
+											display: 'flex',
+											'justify-content': 'space-between',
+											'align-items': 'center',
+											gap: '8px',
+										}}
+									>
+										<div style={{ display: 'flex', 'flex-direction': 'column', gap: '1px' }}>
+											<span style={{ 'font-weight': '600', 'font-size': '12px' }}>
+												{row().modelID || 'unknown model'}
+											</span>
+											<span style={{ 'font-size': '11px', opacity: 0.55 }}>
+												{row().agent || 'agent'} · {row().source}
+											</span>
+										</div>
+										<div style={{ display: 'flex', 'flex-direction': 'column', gap: '1px' }}>
+											<span
+												style={{
+													'font-size': '14px',
+													'font-weight': '700',
+													color: tone,
+												}}
+											>
+												{pctLabel}
+											</span>
+											<span style={{ 'font-size': '11px', opacity: 0.55 }}>used</span>
+										</div>
+									</div>
+									<div style={{ ...TRACK, height: '8px' }}>
+										<div
+											style={{
+												width: `${width}%`,
+												height: '100%',
+												'background-color': tone,
+												transition: 'width 0.3s ease',
+											}}
+										/>
+									</div>
+									<div
+										style={{
+											display: 'flex',
+											'justify-content': 'space-between',
+											'font-size': '11px',
+											opacity: 0.7,
+										}}
+									>
+										<span>
+											{fmt(used)}
+											{hasTotal ? ` / ${fmt(total)}` : ' tokens · limit unknown'}
+										</span>
+										<span>{hasTotal ? `reserve ${fmt(row().reserve || 0)}` : ''}</span>
+									</div>
+								</div>
+
+								{/* --- breakdown card --- */}
+								<div style={CARD}>
 									<div
 										style={{
 											display: 'flex',
@@ -100,67 +175,70 @@ export function ContextView(props: { session: MountedSession }) {
 											'align-items': 'center',
 										}}
 									>
-										<span style={{ 'font-weight': '600', 'font-size': '12px' }}>
-											{row().modelID || 'unknown model'}
-										</span>
-										<span style={{ 'font-size': '12px' }}>
-											{fmt(used)} / {fmt(total)} ({pct.toFixed(0)}%)
-										</span>
+										<span style={{ 'font-size': '12px', 'font-weight': '500' }}>Breakdown</span>
+										<span style={{ 'font-size': '11px', opacity: 0.55 }}>{fmt(used)} total</span>
 									</div>
-									<div
-										style={{
-											width: '100%',
-											height: '6px',
-											'border-radius': '999px',
-											'background-color': 'rgba(255,255,255,0.08)',
-											overflow: 'hidden',
-										}}
-									>
-										<div
-											style={{
-												width: `${pct}%`,
-												height: '100%',
-												'background-color': tone,
-												transition: 'width 0.3s ease',
+									{/* composition bar */}
+									<div style={{ ...TRACK, display: 'flex', height: '6px' }}>
+										<For each={SERIES}>
+											{(cat) => {
+												const val = row()[cat[0]] || 0
+												const share = used > 0 ? Math.max(0, (val / used) * 100) : 0
+												if (share <= 0) return null
+												return (
+													<div
+														style={{
+															width: `${share}%`,
+															height: '100%',
+															'background-color': cat[2],
+															opacity: 0.85,
+														}}
+													/>
+												)
 											}}
-										/>
+										</For>
 									</div>
-								</div>
-								<div
-									style={{
-										display: 'flex',
-										'flex-direction': 'column',
-										gap: '6px',
-										padding: '10px',
-										'border-radius': '8px',
-										border: '1px solid var(--border, rgba(255,255,255,0.1))',
-										'background-color': 'var(--surface, rgba(255,255,255,0.02))',
-									}}
-								>
-									<div
-										style={{ 'font-size': '12px', 'font-weight': '500', 'margin-bottom': '2px' }}
-									>
-										Breakdown
-									</div>
-									<For each={CATEGORIES}>
+									<For each={SERIES}>
 										{(cat) => {
 											const val = row()[cat[0]] || 0
-											if (val === 0) return null
+											const share = used > 0 ? Math.max(0, (val / used) * 100) : 0
+											const dim = val === 0
 											return (
 												<div
 													style={{
-														display: 'grid',
-														'grid-template-columns': '1fr auto',
+														display: 'flex',
+														'align-items': 'center',
 														gap: '8px',
-														'font-size': '12px',
+														opacity: dim ? 0.4 : 1,
 													}}
 												>
-													<span style={{ opacity: 0.8 }}>{cat[1]}</span>
-													<span>{fmt(val)}</span>
+													<span style={{ width: '84px', 'font-size': '11px' }}>{cat[1]}</span>
+													<div style={{ ...TRACK, 'flex-grow': 1, height: '4px' }}>
+														<div
+															style={{
+																width: `${share}%`,
+																height: '100%',
+																'background-color': cat[2],
+															}}
+														/>
+													</div>
+													<span
+														style={{
+															width: '48px',
+															'text-align': 'right',
+															'font-size': '11px',
+														}}
+													>
+														{fmt(val)}
+													</span>
 												</div>
 											)
 										}}
 									</For>
+								</div>
+
+								<div style={{ 'font-size': '10px', opacity: 0.45 }}>
+									estimate · updated {new Date(row().updatedAt).toLocaleTimeString()}
 								</div>
 							</>
 						)

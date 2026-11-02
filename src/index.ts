@@ -53,6 +53,72 @@ function logErr(label: string, err: unknown) {
 	console.error(`[@involvex/oh-my-gui] ${label}:`, err)
 }
 
+// --- model context limits (authoritative denominator) ---
+const modelLimits = new Map<string, { context: number | null; input: number | null }>()
+let limitsLoadedAt = 0
+let limitsLoading = false
+
+const RESERVE_SHARE = 0.1
+const RESERVE_MIN = 16000
+const LIMITS_TTL_MS = 60_000
+
+function modelKey(providerID: string, modelID: string) {
+	return `${providerID}:${modelID}`
+}
+
+/** Mirror of opencode core's compaction reserve: max(10% of window, 16k for windows >= 32k). */
+function reserveFor(window: number) {
+	return Math.max(Math.floor(window * RESERVE_SHARE), window >= 2 * RESERVE_MIN ? RESERVE_MIN : 0)
+}
+
+/** usable window = (limit.input || limit.context) - reserve, or null when the model is unknown. */
+export function usableFor(providerID: string, modelID: string) {
+	if (!modelID) return null
+	let rec = modelLimits.get(modelKey(providerID, modelID))
+	if (!rec) {
+		for (const [key, value] of modelLimits) {
+			if (key.endsWith(`:${modelID}`)) {
+				rec = value
+				break
+			}
+		}
+	}
+	if (!rec) return null
+	const context = rec.context && rec.context > 0 ? rec.context : null
+	const input = rec.input && rec.input > 0 ? rec.input : null
+	const window = input ?? context
+	if (!window || window <= 0) return null
+	const reserved = reserveFor(window)
+	const usable = window - reserved
+	if (usable <= 0) return null
+	return { usable, limit: window, reserved }
+}
+
+async function refreshModelLimits(ctx: any) {
+	if (limitsLoading) return
+	if (modelLimits.size > 0 && Date.now() - limitsLoadedAt < LIMITS_TTL_MS) return
+	limitsLoading = true
+	try {
+		const res: any = await ctx.model.list({})
+		const models = Array.isArray(res) ? res : Array.isArray(res?.data) ? res.data : []
+		for (const m of models) {
+			const modelID = String(m?.modelID ?? m?.id ?? '')
+			const providerID = String(m?.providerID ?? m?.provider?.id ?? '')
+			const lim = m?.limit
+			if (!modelID || !lim || typeof lim !== 'object') continue
+			const context = typeof lim.context === 'number' && lim.context > 0 ? lim.context : null
+			const input = typeof lim.input === 'number' && lim.input > 0 ? lim.input : null
+			if (context == null && input == null) continue
+			modelLimits.set(modelKey(providerID, modelID), { context, input })
+		}
+		if (modelLimits.size > 0) limitsLoadedAt = Date.now()
+	} catch (err) {
+		logErr('model.list failed', err)
+	} finally {
+		limitsLoading = false
+	}
+}
+
 // --- token estimation (same heuristics as opencode-context-indicator) ---
 const CHARS_PER_TOKEN_OTHER = 4
 const CHARS_PER_TOKEN_CYRILLIC = 2.5
@@ -320,7 +386,9 @@ export default Plugin.define({
 						let other = 0
 						if (catSum === 0 && ctxTokens > 0) other = ctxTokens
 						else if (catSum < ctxTokens) other = ctxTokens - catSum
-						const usable = Math.max(ctxTokens, 4096)
+						// real window is resolved from ctx.model.list() in the RPC handler
+						const usable = 0
+						const reserve = 0
 						const modelID = String(
 							c?.model?.id ?? c?.model?.modelID ?? sessionModel.get(sid)?.modelID ?? '',
 						)
@@ -340,7 +408,7 @@ export default Plugin.define({
 							ctx: ctxTokens,
 							input: ctxTokens,
 							usable,
-							reserve: Math.round(usable * 0.1),
+							reserve,
 							user,
 							assistant,
 							reasoning,
@@ -587,7 +655,7 @@ export default Plugin.define({
 												: []
 									if (msgs.length > 0) {
 										const b = estimateFromSessionMessages(msgs)
-										const usable = Math.max(b.total, 4096)
+										const usable = 0
 										row = {
 											sessionID: sid,
 											parentID: row?.parentID ?? '',
@@ -596,7 +664,7 @@ export default Plugin.define({
 											ctx: b.total,
 											input: b.total,
 											usable,
-											reserve: Math.round(usable * 0.1),
+											reserve: 0,
 											user: b.user,
 											assistant: b.assistant,
 											reasoning: b.reasoning,
@@ -689,6 +757,17 @@ export default Plugin.define({
 								agent: agent || row.agent,
 								modelID: modelID || 'unknown',
 								updatedAt: now(),
+							}
+							contextRows.set(sid, row)
+						}
+						if (row) {
+							await refreshModelLimits(ctx)
+							const providerID = sessionModel.get(sid)?.providerID ?? ''
+							const lim = usableFor(providerID, row.modelID)
+							row = {
+								...row,
+								usable: lim?.usable ?? 0,
+								reserve: lim?.reserved ?? 0,
 							}
 							contextRows.set(sid, row)
 						}

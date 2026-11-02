@@ -93,7 +93,7 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 				setPill({
 					sessionID: session.id,
 					label: `${share.toFixed(0)}% ctx`,
-					tone: share >= 85 ? 'danger' : share >= 65 ? 'warning' : undefined,
+					tone: share >= 90 ? 'danger' : share >= 70 ? 'warning' : undefined,
 				})
 				return
 			}
