@@ -610,7 +610,7 @@ export default Plugin.define({
 								toolOut: 0,
 								system: 0,
 								toolSchemas: 0,
-								other: 0,
+								other: 1,
 								source: 'fallback',
 								updatedAt: now(),
 								stale: false,
