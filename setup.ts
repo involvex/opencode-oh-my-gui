@@ -158,8 +158,9 @@ try {
 }
 
 // Handle both old 'plugin' and new 'plugins' keys
-if (Array.isArray((config as any).plugin) && !Array.isArray(config.plugins)) {
-	config.plugins = (config as any).plugin
+const cfg = config as Record<string, unknown>
+if (Array.isArray(cfg.plugin) && !Array.isArray(config.plugins)) {
+	config.plugins = cfg.plugin as string[]
 }
 const currentPlugins = Array.isArray(config.plugins) ? config.plugins : []
 config.plugins = [...currentPlugins, { package: PLUGIN_URL }]

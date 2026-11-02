@@ -73,18 +73,69 @@ export default Plugin.define({
 								providerID: String(c.model?.providerID ?? ''),
 							})
 						}
-						// rough token estimate from messages length
+						// estimate breakdown like opencode-context-indicator
+						const CHARS_PER_TOKEN_OTHER = 4
+						const CHARS_PER_TOKEN_CYRILLIC = 2.5
+						const CHARS_PER_TOKEN_CJK = 1.5
+						const estimateTokens = (text: any): number => {
+							if (!text) return 0
+							const s = typeof text === 'string' ? text : String(text)
+							const len = s.length
+							if (len === 0) return 0
+							let other = 0,
+								cyr = 0,
+								cjk = 0
+							for (let i = 0; i < len; i++) {
+								const cp = s.codePointAt(i) ?? 0
+								if (cp > 0xffff) i++
+								if (cp < 0x80) other++
+								else if (
+									(cp >= 0x0400 && cp <= 0x04ff) ||
+									(cp >= 0x0500 && cp <= 0x052f) ||
+									(cp >= 0x2de0 && cp <= 0x2dff) ||
+									(cp >= 0xa640 && cp <= 0xa69f) ||
+									(cp >= 0x1c80 && cp <= 0x1c8f)
+								)
+									cyr++
+								else if (
+									(cp >= 0x4e00 && cp <= 0x9fff) ||
+									(cp >= 0x3400 && cp <= 0x4dbf) ||
+									(cp >= 0xf900 && cp <= 0xfaff) ||
+									(cp >= 0x3040 && cp <= 0x30ff) ||
+									(cp >= 0xac00 && cp <= 0xd7af) ||
+									(cp >= 0x3000 && cp <= 0x303f) ||
+									(cp >= 0xff00 && cp <= 0xffef)
+								)
+									cjk++
+								else other++
+							}
+							return Math.round(
+								other / CHARS_PER_TOKEN_OTHER +
+									cyr / CHARS_PER_TOKEN_CYRILLIC +
+									cjk / CHARS_PER_TOKEN_CJK,
+							)
+						}
+						const estJson = (value: any): number => {
+							if (value == null) return 0
+							try {
+								return estimateTokens(JSON.stringify(value))
+							} catch {
+								return 0
+							}
+						}
 						const msgs = Array.isArray(c?.messages) ? c.messages : []
 						const sys = Array.isArray(c?.system) ? c.system : []
-						const getLen = (v: any): number => {
+						const genericLen = (v: any): number => {
+							if (v == null) return 0
 							if (typeof v === 'string') return v.length
-							if (Array.isArray(v)) return v.reduce((a: number, b: any) => a + getLen(b), 0)
-							if (v && typeof v === 'object') {
-								if (typeof v.content === 'string') return v.content.length
-								if (Array.isArray(v.content))
-									return v.content.reduce((a: number, b: any) => a + getLen(b), 0)
-								if (typeof v.text === 'string') return v.text.length
-								if (typeof v.value === 'string') return v.value.length
+							if (Array.isArray(v)) return v.reduce((a: number, b: any) => a + genericLen(b), 0)
+							if (typeof v === 'object') {
+								let n = 0
+								for (const k of Object.keys(v)) {
+									if (k === 'id' || k === 'type' || k === 'role' || k === 'time') continue
+									n += genericLen((v as any)[k])
+								}
+								return n
 							}
 							return 0
 						}
@@ -94,19 +145,77 @@ export default Plugin.define({
 							toolArgs = 0,
 							toolOut = 0
 						for (const m of msgs) {
-							const role = String(m?.role ?? m?.type ?? '').toLowerCase()
-							const len = getLen(m)
-							if (role.includes('user')) user += len
-							else if (role.includes('assistant')) assistant += len
-							else if (role.includes('thought') || role.includes('reason')) reasoning += len
-							else if (role.includes('tool')) {
-								if (role.includes('call') || role.includes('args')) toolArgs += len
-								else toolOut += len
+							const parts = Array.isArray(m?.content)
+								? m.content
+								: Array.isArray(m?.parts)
+									? m.parts
+									: typeof m?.content === 'string'
+										? [{ type: 'text', text: m.content }]
+										: []
+							const role = String(m?.role ?? m?.type ?? m?.author ?? '').toLowerCase()
+							for (const p of parts) {
+								const ptype = String(p?.type ?? '').toLowerCase()
+								if (
+									ptype === 'tool-result' ||
+									ptype === 'tool_result' ||
+									ptype.includes('tool-result')
+								) {
+									toolOut += estimateTokens(
+										typeof p?.text === 'string'
+											? p.text
+											: typeof p?.content === 'string'
+												? p.content
+												: JSON.stringify(p?.output ?? p?.result ?? p?.value ?? ''),
+									)
+									continue
+								}
+								if (role.includes('user')) {
+									if (ptype === 'text' || ptype === 'input_text')
+										user += estimateTokens(p.text ?? p.content ?? '')
+								} else {
+									if (ptype === 'text' || ptype === 'output_text')
+										assistant += estimateTokens(p.text ?? p.content ?? '')
+									else if (ptype === 'reasoning' || ptype === 'thought')
+										reasoning += estimateTokens(p.text ?? p.content ?? '')
+									else if (
+										ptype === 'tool-call' ||
+										ptype === 'tool_call' ||
+										ptype === 'function-call' ||
+										ptype.includes('tool-call')
+									)
+										toolArgs += estJson(p.input ?? p.args ?? p.arguments)
+								}
+							}
+							if (parts.length === 0) {
+								const len = genericLen(m)
+								if (role.includes('user')) user += Math.round(len / 4)
+								else assistant += Math.round(len / 4)
 							}
 						}
-						const system = sys.reduce((n: number, s: any) => n + getLen(s), 0)
-						const est = getLen(msgs) + system
-						const ctxTokens = Math.max(1, Math.round(est / 4))
+						let system = 0
+						for (const s of sys) system += estimateTokens(s?.text ?? s)
+						let toolSchemas = 0
+						const tools = c?.tools
+						if (tools && typeof tools === 'object') {
+							for (const t of Object.values(tools)) {
+								toolSchemas += estimateTokens((t as any)?.description) + estJson((t as any)?.input)
+							}
+						}
+						let ctxTokens = user + assistant + reasoning + toolArgs + toolOut + system + toolSchemas
+						if (ctxTokens === 0) {
+							const est = genericLen(msgs) + genericLen(sys)
+							ctxTokens = Math.max(1, Math.round(est / 4))
+							if (user + assistant + reasoning + toolArgs + toolOut + system + toolSchemas === 0) {
+								// put everything into 'other' so breakdown isn't empty
+								// (will be adjusted below)
+							}
+						}
+						if (ctxTokens < 1) ctxTokens = 1
+						// ensure at least one category reflects the total
+						const catSum = user + assistant + reasoning + toolArgs + toolOut + system + toolSchemas
+						let other = 0
+						if (catSum === 0 && ctxTokens > 0) other = ctxTokens
+						else if (catSum < ctxTokens) other = ctxTokens - catSum
 						const usable = Math.max(ctxTokens, 4096)
 						let modelID = String(
 							c?.model?.id ?? c?.model?.modelID ?? sessionModel.get(sid)?.modelID ?? '',
@@ -131,7 +240,9 @@ export default Plugin.define({
 									})
 								}
 								if (agent) sessionAgent.set(sid, agent)
-							} catch {}
+							} catch (e) {
+								console.error(e)
+							}
 						}
 						contextRows.set(sid, {
 							sessionID: sid,
@@ -142,14 +253,14 @@ export default Plugin.define({
 							input: ctxTokens,
 							usable,
 							reserve: Math.round(usable * 0.1),
-							user: Math.round(user / 4),
-							assistant: Math.round(assistant / 4),
-							reasoning: Math.round(reasoning / 4),
-							toolArgs: Math.round(toolArgs / 4),
-							toolOut: Math.round(toolOut / 4),
-							system: Math.round(system / 4),
-							toolSchemas: 0,
-							other: 0,
+							user,
+							assistant,
+							reasoning,
+							toolArgs,
+							toolOut,
+							system,
+							toolSchemas,
+							other,
 							source: 'estimate',
 							updatedAt: now(),
 							stale: false,

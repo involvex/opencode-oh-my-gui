@@ -20,8 +20,10 @@
 		"dist"
 	],
 	"scripts": {
-		"check": "bun run format && bun run lint:fix && bun run typecheck",
+		"verify": "bun run format && bun run lint:fix && bun check",
+		"prebuild": "bun run verify",
 		"dev": "bun run dev.ts",
+		"build": "bun run build:gui",
 		"build:gui": "vite build",
 		"dev:gui": "vite build --watch",
 		"format": "prettier . --write",
@@ -50,7 +52,7 @@
 		"electron": "^45.2.1",
 		"eslint": "^10.14.0",
 		"prettier": "^3.9.6",
-		"typescript": "^7.0.2",
+		"typescript": "6.0.3",
 		"typescript-eslint": "^8.65.0",
 		"vite": "^8.3.5",
 		"vite-plugin-solid": "^2.11.15"

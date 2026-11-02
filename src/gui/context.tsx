@@ -57,37 +57,114 @@ export function ContextView(props: { session: MountedSession }) {
 	const fmt = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
 
 	return (
-		<div style={{ display: 'flex', 'flex-direction': 'column', gap: '8px' }}>
-			<Show when={loaded()} fallback={<div>Loading context...</div>}>
+		<div style={{ display: 'flex', 'flex-direction': 'column', gap: '10px' }}>
+			<Show
+				when={loaded()}
+				fallback={<div style={{ opacity: 0.7, 'font-size': '12px' }}>Loading context...</div>}
+			>
 				<Show when={error()}>
-					<div>Server unavailable: {error()} (retrying)</div>
+					<div style={{ 'font-size': '12px', color: '#f87171' }}>
+						Server unavailable: {error()} (retrying)
+					</div>
 				</Show>
 				<Show
 					when={root()}
 					fallback={
 						<Show when={!error()}>
-							<div>No measurement yet.</div>
+							<div style={{ opacity: 0.7, 'font-size': '12px' }}>No measurement yet.</div>
 						</Show>
 					}
 				>
-					{(row) => (
-						<>
-							<div style={{ display: 'flex', 'justify-content': 'space-between' }}>
-								<span style={{ 'font-weight': '600' }}>{row().modelID || 'unknown model'}</span>
-								<span>
-									{fmt(row().ctx)} / {fmt(row().usable)}
-								</span>
-							</div>
-							<For each={CATEGORIES}>
-								{(cat) => (
-									<div style={{ display: 'grid', 'grid-template-columns': '1fr auto', gap: '6px' }}>
-										<span>{cat[1]}</span>
-										<span>{fmt(row()[cat[0]])}</span>
+					{(row) => {
+						const used = row().ctx || 0
+						const total = row().usable || 1
+						const pct = Math.min(100, Math.max(0, (used / total) * 100))
+						const tone = pct >= 85 ? '#f87171' : pct >= 65 ? '#fbbf24' : '#22c55e'
+						return (
+							<>
+								<div
+									style={{
+										display: 'flex',
+										'flex-direction': 'column',
+										gap: '6px',
+										padding: '10px',
+										'border-radius': '8px',
+										border: '1px solid var(--border, rgba(255,255,255,0.1))',
+										'background-color': 'var(--surface, rgba(255,255,255,0.02))',
+									}}
+								>
+									<div
+										style={{
+											display: 'flex',
+											'justify-content': 'space-between',
+											'align-items': 'center',
+										}}
+									>
+										<span style={{ 'font-weight': '600', 'font-size': '12px' }}>
+											{row().modelID || 'unknown model'}
+										</span>
+										<span style={{ 'font-size': '12px' }}>
+											{fmt(used)} / {fmt(total)} ({pct.toFixed(0)}%)
+										</span>
 									</div>
-								)}
-							</For>
-						</>
-					)}
+									<div
+										style={{
+											width: '100%',
+											height: '6px',
+											'border-radius': '999px',
+											'background-color': 'rgba(255,255,255,0.08)',
+											overflow: 'hidden',
+										}}
+									>
+										<div
+											style={{
+												width: `${pct}%`,
+												height: '100%',
+												'background-color': tone,
+												transition: 'width 0.3s ease',
+											}}
+										/>
+									</div>
+								</div>
+								<div
+									style={{
+										display: 'flex',
+										'flex-direction': 'column',
+										gap: '6px',
+										padding: '10px',
+										'border-radius': '8px',
+										border: '1px solid var(--border, rgba(255,255,255,0.1))',
+										'background-color': 'var(--surface, rgba(255,255,255,0.02))',
+									}}
+								>
+									<div
+										style={{ 'font-size': '12px', 'font-weight': '500', 'margin-bottom': '2px' }}
+									>
+										Breakdown
+									</div>
+									<For each={CATEGORIES}>
+										{(cat) => {
+											const val = row()[cat[0]] || 0
+											if (val === 0) return null
+											return (
+												<div
+													style={{
+														display: 'grid',
+														'grid-template-columns': '1fr auto',
+														gap: '8px',
+														'font-size': '12px',
+													}}
+												>
+													<span style={{ opacity: 0.8 }}>{cat[1]}</span>
+													<span>{fmt(val)}</span>
+												</div>
+											)
+										}}
+									</For>
+								</div>
+							</>
+						)
+					}}
 				</Show>
 			</Show>
 		</div>
