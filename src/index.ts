@@ -267,33 +267,17 @@ export default Plugin.define({
 						if (catSum === 0 && ctxTokens > 0) other = ctxTokens
 						else if (catSum < ctxTokens) other = ctxTokens - catSum
 						const usable = Math.max(ctxTokens, 4096)
-						let modelID = String(
+						const modelID = String(
 							c?.model?.id ?? c?.model?.modelID ?? sessionModel.get(sid)?.modelID ?? '',
 						)
-						let agent = String(c?.agent ?? sessionAgent.get(sid) ?? '')
-						if (
-							(!modelID || modelID === 'undefined') &&
-							ctx?.session &&
-							typeof (ctx.session as any).get === 'function'
-						) {
-							try {
-								const s: any = await (ctx.session as any).get({ sessionID: sid })
-								const data = s?.data ?? s
-								if (!agent) agent = String(data?.agent ?? data?.agentID ?? '')
-								if (!modelID || modelID === 'undefined') {
-									modelID = String(data?.model?.id ?? data?.modelID ?? data?.currentModel?.id ?? '')
-								}
-								if (modelID && modelID !== 'undefined') {
-									sessionModel.set(sid, {
-										modelID,
-										providerID: data?.model?.providerID ?? sessionModel.get(sid)?.providerID ?? '',
-									})
-								}
-								if (agent) sessionAgent.set(sid, agent)
-							} catch (e) {
-								console.error(e)
-							}
+						const agent = String(c?.agent ?? sessionAgent.get(sid) ?? '')
+						if (c?.model) {
+							sessionModel.set(sid, {
+								modelID: String(c.model?.id ?? c.model?.modelID ?? ''),
+								providerID: String(c.model?.providerID ?? ''),
+							})
 						}
+						if (c?.agent) sessionAgent.set(sid, String(c.agent))
 						contextRows.set(sid, {
 							sessionID: sid,
 							parentID: '',
