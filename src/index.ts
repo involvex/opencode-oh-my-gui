@@ -253,12 +253,9 @@ export default Plugin.define({
 						}
 						let ctxTokens = user + assistant + reasoning + toolArgs + toolOut + system + toolSchemas
 						if (ctxTokens === 0) {
-							const est = genericLen(msgs) + genericLen(sys)
+							let est = genericLen(msgs) + genericLen(sys) + genericLen(c?.tools)
+							if (est === 0) est = genericLen(c)
 							ctxTokens = Math.max(1, Math.round(est / 4))
-							if (user + assistant + reasoning + toolArgs + toolOut + system + toolSchemas === 0) {
-								// put everything into 'other' so breakdown isn't empty
-								// (will be adjusted below)
-							}
 						}
 						if (ctxTokens < 1) ctxTokens = 1
 						// ensure at least one category reflects the total
