@@ -53,49 +53,169 @@ function logErr(label: string, err: unknown) {
 	console.error(`[@involvex/oh-my-gui] ${label}:`, err)
 }
 
+// --- token estimation (same heuristics as opencode-context-indicator) ---
+const CHARS_PER_TOKEN_OTHER = 4
+const CHARS_PER_TOKEN_CYRILLIC = 2.5
+const CHARS_PER_TOKEN_CJK = 1.5
+
+function estimateTokens(text: unknown): number {
+	if (text == null || text === '') return 0
+	const s = typeof text === 'string' ? text : String(text)
+	const len = s.length
+	if (len === 0) return 0
+	let other = 0
+	let cyr = 0
+	let cjk = 0
+	for (let i = 0; i < len; i++) {
+		const cp = s.codePointAt(i) ?? 0
+		if (cp > 0xffff) i++
+		if (cp < 0x80) other++
+		else if (
+			(cp >= 0x0400 && cp <= 0x04ff) ||
+			(cp >= 0x0500 && cp <= 0x052f) ||
+			(cp >= 0x2de0 && cp <= 0x2dff) ||
+			(cp >= 0xa640 && cp <= 0xa69f) ||
+			(cp >= 0x1c80 && cp <= 0x1c8f)
+		)
+			cyr++
+		else if (
+			(cp >= 0x4e00 && cp <= 0x9fff) ||
+			(cp >= 0x3400 && cp <= 0x4dbf) ||
+			(cp >= 0xf900 && cp <= 0xfaff) ||
+			(cp >= 0x3040 && cp <= 0x30ff) ||
+			(cp >= 0xac00 && cp <= 0xd7af) ||
+			(cp >= 0x3000 && cp <= 0x303f) ||
+			(cp >= 0xff00 && cp <= 0xffef)
+		)
+			cjk++
+		else other++
+	}
+	return Math.round(
+		other / CHARS_PER_TOKEN_OTHER + cyr / CHARS_PER_TOKEN_CYRILLIC + cjk / CHARS_PER_TOKEN_CJK,
+	)
+}
+
+function estJson(value: unknown): number {
+	if (value == null) return 0
+	try {
+		return estimateTokens(JSON.stringify(value))
+	} catch {
+		return 0
+	}
+}
+
+/** Character count of any value, ignoring structural keys that carry no token weight. */
+function genericLen(v: any): number {
+	if (v == null) return 0
+	if (typeof v === 'string') return v.length
+	if (Array.isArray(v)) return v.reduce((a: number, b: any) => a + genericLen(b), 0)
+	if (typeof v === 'object') {
+		let n = 0
+		for (const k of Object.keys(v)) {
+			if (k === 'id' || k === 'type' || k === 'role' || k === 'time' || k === 'metadata') continue
+			n += genericLen((v as any)[k])
+		}
+		return n
+	}
+	return 0
+}
+
+interface Breakdown {
+	user: number
+	assistant: number
+	reasoning: number
+	toolArgs: number
+	toolOut: number
+	system: number
+	toolSchemas: number
+	other: number
+	total: number
+}
+
+function emptyBreakdown(): Breakdown {
+	return {
+		user: 0,
+		assistant: 0,
+		reasoning: 0,
+		toolArgs: 0,
+		toolOut: 0,
+		system: 0,
+		toolSchemas: 0,
+		other: 0,
+		total: 0,
+	}
+}
+
+function breakdownSum(b: Breakdown): number {
+	return (
+		b.user + b.assistant + b.reasoning + b.toolArgs + b.toolOut + b.system + b.toolSchemas + b.other
+	)
+}
+
+function finalizeBreakdown(b: Breakdown): Breakdown {
+	b.total = breakdownSum(b)
+	return b
+}
+
+/**
+ * Breakdown from the persisted session message list (`ctx.session.context()`), i.e.
+ * `SessionMessage.Info[]`. Shapes:
+ *   { type: 'user', text }
+ *   { type: 'assistant', content: [{ type: 'text' | 'reasoning', text } | { type: 'tool', name, state }] }
+ * Tool parts carry their payload in `state.input` / `state.content` (not `output`).
+ */
+export function estimateFromSessionMessages(messages: any[]): Breakdown {
+	const b = emptyBreakdown()
+	for (const m of messages) {
+		if (!m || typeof m !== 'object') continue
+		const type = String(m.type ?? '').toLowerCase()
+		if (type === 'user' || type === 'synthetic') {
+			b.user += estimateTokens(m.text)
+			continue
+		}
+		if (type === 'system' || type === 'skill') {
+			b.system += estimateTokens(m.text)
+			continue
+		}
+		if (type !== 'assistant') continue
+		const parts = Array.isArray(m.content) ? m.content : []
+		for (const p of parts) {
+			const ptype = String(p?.type ?? '').toLowerCase()
+			if (ptype === 'text') b.assistant += estimateTokens(p?.text)
+			else if (ptype === 'reasoning') b.reasoning += estimateTokens(p?.text)
+			else if (ptype === 'tool') {
+				const state = p?.state ?? {}
+				// streaming input is a partial JSON string - only count resolved objects
+				if (state.input && typeof state.input === 'object') {
+					b.toolArgs += estJson(state.input)
+				}
+				if (Array.isArray(state.content)) {
+					for (const item of state.content) {
+						if (item?.type === 'text') b.toolOut += estimateTokens(item.text)
+					}
+				}
+				if (state.error?.message) b.toolOut += estimateTokens(state.error.message)
+			}
+		}
+	}
+	if (breakdownSum(b) === 0) {
+		const chars = genericLen(messages)
+		b.other = Math.max(1, Math.round(chars / 4))
+	}
+	return finalizeBreakdown(b)
+}
+
 export default Plugin.define({
 	id: '@involvex/oh-my-gui',
-	setup(ctx) {
+	async setup(ctx) {
 		console.log('[@involvex/oh-my-gui] server plugin initialized')
 
-		const registrations: { dispose?: () => void }[] = []
+		const registrations: { dispose?: () => void | Promise<void> }[] = []
 
 		// --- session context hook: capture model + a rough context size ---
 		try {
-			const reg = ctx.session.hook('context', async (c: any) => {
+			const reg = await ctx.session.hook('context', (c: any) => {
 				try {
-					console.log(
-						'[@involvex/oh-my-gui] context hook fired, keys:',
-						Object.keys(c ?? {}),
-						'msgs:',
-						Array.isArray(c?.messages) ? c.messages.length : 'n/a',
-						'sid:',
-						c?.sessionID,
-					)
-					if (Array.isArray(c?.messages) && c.messages.length > 0) {
-						const m0 = c.messages[0]
-						console.log(
-							'[@involvex/oh-my-gui] first msg keys:',
-							Object.keys(m0 ?? {}),
-							'role:',
-							m0?.role,
-							'content type:',
-							typeof m0?.content,
-							Array.isArray(m0?.content) ? m0.content.length : m0?.content,
-						)
-						if (Array.isArray(m0?.content) && m0.content.length > 0) {
-							console.log(
-								'[@involvex/oh-my-gui] first part:',
-								JSON.stringify(m0.content[0]).slice(0, 300),
-							)
-						}
-					}
-					if (c?.system)
-						console.log(
-							'[@involvex/oh-my-gui] system type:',
-							typeof c.system,
-							Array.isArray(c.system) ? c.system.length : c.system,
-						)
 					const sid = String(
 						c?.sessionID ?? c?.session?.id ?? c?.data?.sessionID ?? c?.sessionId ?? '',
 					)
@@ -108,55 +228,6 @@ export default Plugin.define({
 							})
 						}
 						// estimate breakdown like opencode-context-indicator
-						const CHARS_PER_TOKEN_OTHER = 4
-						const CHARS_PER_TOKEN_CYRILLIC = 2.5
-						const CHARS_PER_TOKEN_CJK = 1.5
-						const estimateTokens = (text: any): number => {
-							if (!text) return 0
-							const s = typeof text === 'string' ? text : String(text)
-							const len = s.length
-							if (len === 0) return 0
-							let other = 0,
-								cyr = 0,
-								cjk = 0
-							for (let i = 0; i < len; i++) {
-								const cp = s.codePointAt(i) ?? 0
-								if (cp > 0xffff) i++
-								if (cp < 0x80) other++
-								else if (
-									(cp >= 0x0400 && cp <= 0x04ff) ||
-									(cp >= 0x0500 && cp <= 0x052f) ||
-									(cp >= 0x2de0 && cp <= 0x2dff) ||
-									(cp >= 0xa640 && cp <= 0xa69f) ||
-									(cp >= 0x1c80 && cp <= 0x1c8f)
-								)
-									cyr++
-								else if (
-									(cp >= 0x4e00 && cp <= 0x9fff) ||
-									(cp >= 0x3400 && cp <= 0x4dbf) ||
-									(cp >= 0xf900 && cp <= 0xfaff) ||
-									(cp >= 0x3040 && cp <= 0x30ff) ||
-									(cp >= 0xac00 && cp <= 0xd7af) ||
-									(cp >= 0x3000 && cp <= 0x303f) ||
-									(cp >= 0xff00 && cp <= 0xffef)
-								)
-									cjk++
-								else other++
-							}
-							return Math.round(
-								other / CHARS_PER_TOKEN_OTHER +
-									cyr / CHARS_PER_TOKEN_CYRILLIC +
-									cjk / CHARS_PER_TOKEN_CJK,
-							)
-						}
-						const estJson = (value: any): number => {
-							if (value == null) return 0
-							try {
-								return estimateTokens(JSON.stringify(value))
-							} catch {
-								return 0
-							}
-						}
 						const msgs = Array.isArray(c?.messages)
 							? c.messages
 							: Array.isArray(c?.message)
@@ -175,20 +246,6 @@ export default Plugin.define({
 									: typeof c?.system === 'string'
 										? [{ text: c.system }]
 										: []
-						const genericLen = (v: any): number => {
-							if (v == null) return 0
-							if (typeof v === 'string') return v.length
-							if (Array.isArray(v)) return v.reduce((a: number, b: any) => a + genericLen(b), 0)
-							if (typeof v === 'object') {
-								let n = 0
-								for (const k of Object.keys(v)) {
-									if (k === 'id' || k === 'type' || k === 'role' || k === 'time') continue
-									n += genericLen((v as any)[k])
-								}
-								return n
-							}
-							return 0
-						}
 						let user = 0,
 							assistant = 0,
 							reasoning = 0,
@@ -301,14 +358,14 @@ export default Plugin.define({
 					logErr('context hook handler failed', err)
 				}
 			})
-			registrations.push(reg as any)
+			registrations.push(reg)
 		} catch (err) {
 			logErr('context hook registration failed', err)
 		}
 
 		// --- tool hooks: log ---
 		try {
-			const reg = ctx.tool.hook('execute.before', (e: any) => {
+			const reg = await ctx.tool.hook('execute.before', (e: any) => {
 				pushHook({
 					ts: now(),
 					type: 'tool.before',
@@ -318,12 +375,12 @@ export default Plugin.define({
 					sessionID: String(e?.sessionID ?? ''),
 				})
 			})
-			registrations.push(reg as any)
+			registrations.push(reg)
 		} catch (err) {
 			logErr('tool before hook registration failed', err)
 		}
 		try {
-			const reg = ctx.tool.hook('execute.after', (e: any) => {
+			const reg = await ctx.tool.hook('execute.after', (e: any) => {
 				pushHook({
 					ts: now(),
 					type: 'tool.after',
@@ -333,7 +390,7 @@ export default Plugin.define({
 					sessionID: String(e?.sessionID ?? ''),
 				})
 			})
-			registrations.push(reg as any)
+			registrations.push(reg)
 		} catch (err) {
 			logErr('tool after hook registration failed', err)
 		}
@@ -400,7 +457,7 @@ export default Plugin.define({
 
 		// --- prompt hook: track directory not available; just log ---
 		try {
-			const reg = ctx.session.hook('prompt', (p: any) => {
+			const reg = await ctx.session.hook('prompt', (p: any) => {
 				try {
 					const sid = String(p?.sessionID ?? '')
 					pushHook({
@@ -438,7 +495,7 @@ export default Plugin.define({
 					logErr('prompt hook handler failed', err)
 				}
 			})
-			registrations.push(reg as any)
+			registrations.push(reg)
 		} catch (err) {
 			logErr('prompt hook registration failed', err)
 		}
@@ -504,8 +561,20 @@ export default Plugin.define({
 					context: async (input: any) => {
 						const sid = String(input?.sessionID ?? '')
 						let row = contextRows.get(sid)
-						// If no row or empty measurement, try to build one from session messages
-						if (!row || (row.ctx ?? 0) <= 1) {
+						// Hook data wins, but only when it actually classified something.
+						const hookHasBreakdown =
+							!!row &&
+							row.source === 'estimate' &&
+							row.user +
+								row.assistant +
+								row.reasoning +
+								row.toolArgs +
+								row.toolOut +
+								row.system +
+								row.toolSchemas >
+								0
+						// Otherwise derive the breakdown from the persisted session messages.
+						if ((!row || !hookHasBreakdown) && sid) {
 							try {
 								if (ctx?.session && typeof (ctx.session as any).context === 'function') {
 									const res: any = await (ctx.session as any).context({ sessionID: sid })
@@ -517,48 +586,26 @@ export default Plugin.define({
 												? res.messages
 												: []
 									if (msgs.length > 0) {
-										const genericLen = (v: any): number => {
-											if (v == null) return 0
-											if (typeof v === 'string') return v.length
-											if (Array.isArray(v))
-												return v.reduce((a: number, b: any) => a + genericLen(b), 0)
-											if (typeof v === 'object') {
-												let n = 0
-												for (const k of Object.keys(v)) {
-													if (
-														k === 'id' ||
-														k === 'type' ||
-														k === 'role' ||
-														k === 'time' ||
-														k === 'metadata'
-													)
-														continue
-													n += genericLen((v as any)[k])
-												}
-												return n
-											}
-											return 0
-										}
-										const totalChars = msgs.reduce((a: number, m: any) => a + genericLen(m), 0)
-										const ctxTokens = Math.max(1, Math.round(totalChars / 4))
+										const b = estimateFromSessionMessages(msgs)
+										const usable = Math.max(b.total, 4096)
 										row = {
 											sessionID: sid,
-											parentID: '',
-											agent: sessionAgent.get(sid) ?? '',
-											modelID: sessionModel.get(sid)?.modelID ?? 'unknown',
-											ctx: ctxTokens,
-											input: ctxTokens,
-											usable: Math.max(ctxTokens, 4096),
-											reserve: Math.round(Math.max(ctxTokens, 4096) * 0.1),
-											user: 0,
-											assistant: 0,
-											reasoning: 0,
-											toolArgs: 0,
-											toolOut: 0,
-											system: 0,
-											toolSchemas: 0,
-											other: ctxTokens,
-											source: 'session-messages',
+											parentID: row?.parentID ?? '',
+											agent: sessionAgent.get(sid) ?? row?.agent ?? '',
+											modelID: sessionModel.get(sid)?.modelID ?? row?.modelID ?? 'unknown',
+											ctx: b.total,
+											input: b.total,
+											usable,
+											reserve: Math.round(usable * 0.1),
+											user: b.user,
+											assistant: b.assistant,
+											reasoning: b.reasoning,
+											toolArgs: b.toolArgs,
+											toolOut: b.toolOut,
+											system: b.system,
+											toolSchemas: b.toolSchemas,
+											other: b.other,
+											source: 'client-context',
 											updatedAt: now(),
 											stale: false,
 										}
@@ -656,7 +703,7 @@ export default Plugin.define({
 						return { sessionID: sid, entries: filtered.slice(0, limit) }
 					},
 				})
-				registrations.push(reg as any)
+				registrations.push(reg)
 			} catch (err) {
 				logErr('desktop RPC registration failed', err)
 			}
