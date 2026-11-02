@@ -96,7 +96,9 @@ export default Plugin.define({
 							typeof c.system,
 							Array.isArray(c.system) ? c.system.length : c.system,
 						)
-					const sid = c?.sessionID ?? ''
+					const sid = String(
+						c?.sessionID ?? c?.session?.id ?? c?.data?.sessionID ?? c?.sessionId ?? '',
+					)
 					if (sid) {
 						if (c?.agent) sessionAgent.set(sid, String(c.agent))
 						if (c?.model) {
@@ -155,8 +157,24 @@ export default Plugin.define({
 								return 0
 							}
 						}
-						const msgs = Array.isArray(c?.messages) ? c.messages : []
-						const sys = Array.isArray(c?.system) ? c.system : []
+						const msgs = Array.isArray(c?.messages)
+							? c.messages
+							: Array.isArray(c?.message)
+								? c.message
+								: Array.isArray(c?.input?.messages)
+									? c.input.messages
+									: Array.isArray(c?.request?.messages)
+										? c.request.messages
+										: []
+						const sys = Array.isArray(c?.system)
+							? c.system
+							: Array.isArray(c?.systemPrompt)
+								? c.systemPrompt
+								: Array.isArray(c?.system_prompt)
+									? c.system_prompt
+									: typeof c?.system === 'string'
+										? [{ text: c.system }]
+										: []
 						const genericLen = (v: any): number => {
 							if (v == null) return 0
 							if (typeof v === 'string') return v.length
