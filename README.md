@@ -183,6 +183,10 @@ If you're migrating from V1:
 | `"plugin": ["name"]`                        | `"plugins": [{ "package": "name" }]`                                    |
 | `permission.ask` with `output.status`       | `ctx.permission.hook('evaluate', ({ effect }) => { effect = 'allow' })` |
 
+## Commit pill
+
+A "Commit N" pill appears next to the context pill in the composer when there are uncommitted changes in the session's repository. Clicking it sends `/commit` to the current session (queued). The pill reads changes from the review view and hides automatically once the repository is clean.
+
 ## Resources
 
 - [Plugin Documentation](https://opencode.ai/v2/docs/build/plugins)

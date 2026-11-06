@@ -19,6 +19,7 @@ import { ContextView } from './context'
 import { AgentsView } from './agents'
 import { HooksView } from './hooks'
 import { InfoView } from './info'
+import { sendCommit, useCommitChanges } from './commit'
 
 const PANEL_ID = 'main'
 const ICON = 'window-analytics'
@@ -128,6 +129,45 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 				tone: current.tone,
 				title: 'Context window usage',
 				run: () => open(session as any),
+			}
+		},
+	}))
+
+	const commitState = useCommitChanges(ctx)
+	const [busy, setBusy] = createSignal<string | undefined>()
+
+	const runCommit = async (session: MountedSession) => {
+		const key = session.key
+		if (busy() === key) return
+		setBusy(key)
+		try {
+			await sendCommit(session)
+		} catch {
+			try {
+				ctx.toast.show({ title: ctx.t('toast.commit.failed'), variant: 'error' } as any)
+			} catch {
+				/* ignore */
+			}
+		} finally {
+			if (busy() === key) setBusy(undefined)
+		}
+	}
+
+	ctx.add(ComposerPill, () => ({
+		id: 'commit',
+		order: 1,
+		show: ({ session }) => {
+			const prefs = ctx.stores.prefs.value as any
+			if (prefs.showCommit === false) return undefined
+			const { count } = commitState(session)
+			const pending = busy() === session.key
+			if (count === 0 && !pending) return undefined
+			return {
+				label: pending ? ctx.t('pill.commit.busy') : `${ctx.t('pill.commit')} ${count}`,
+				icon: 'check',
+				tone: pending ? 'warning' : undefined,
+				title: ctx.t('pill.commit.title'),
+				run: () => void runCommit(session as MountedSession),
 			}
 		},
 	}))
@@ -274,6 +314,37 @@ function SettingsView(props: { target?: string }) {
 					<div style={{ display: 'flex', 'flex-direction': 'column', gap: '2px' }}>
 						<span style={{ 'font-size': '13px' }}>Info</span>
 						<span style={{ 'font-size': '11px', opacity: 0.6 }}>Show session information</span>
+					</div>
+				</label>
+			</div>
+			<div
+				style={{
+					display: 'flex',
+					'flex-direction': 'column',
+					gap: '12px',
+					padding: '16px',
+					'border-radius': '8px',
+					border: '1px solid var(--border, rgba(255,255,255,0.1))',
+					'background-color': 'var(--surface, rgba(255,255,255,0.02))',
+				}}
+			>
+				<div style={{ 'font-size': '13px', 'font-weight': '500', 'margin-bottom': '4px' }}>
+					{ctx.t('settings.pill')}
+				</div>
+				<label style={{ display: 'flex', 'align-items': 'center', gap: '10px', cursor: 'pointer' }}>
+					<input
+						type="checkbox"
+						checked={p.value.showCommit !== false}
+						onChange={(e) =>
+							p.set({ ...p.value, showCommit: (e.target as HTMLInputElement).checked })
+						}
+						style={{ cursor: 'pointer' }}
+					/>
+					<div style={{ display: 'flex', 'flex-direction': 'column', gap: '2px' }}>
+						<span style={{ 'font-size': '13px' }}>{ctx.t('settings.showCommit')}</span>
+						<span style={{ 'font-size': '11px', opacity: 0.6 }}>
+							Show Commit pill when there are uncommitted changes
+						</span>
 					</div>
 				</label>
 			</div>
