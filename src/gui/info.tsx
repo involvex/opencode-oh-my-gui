@@ -2,16 +2,18 @@
 import { Show, createEffect, createSignal, onCleanup } from 'solid-js'
 import { usePlugin } from '@opencode/plugin/gui'
 import type { MountedSession } from '@opencode/plugin/gui'
+import type { definition } from './definition'
 import { DashboardRpc } from '../rpc'
 
 export function InfoView(props: { session: MountedSession }) {
-	const ctx = usePlugin()
+	const ctx = usePlugin<typeof definition>()
 	const [data, setData] = createSignal<any>(null)
 	const [error, setError] = createSignal('')
 	const [loaded, setLoaded] = createSignal(false)
 
 	createEffect(() => {
 		const sessionID = props.session.id
+		const ms = Math.max(500, Number((ctx.stores.prefs.value as any).pollMs) || 3000)
 		let pending = false
 		let disposed = false
 		setLoaded(false)
@@ -34,7 +36,7 @@ export function InfoView(props: { session: MountedSession }) {
 			}
 		}
 		void load()
-		const timer = setInterval(() => void load(), 3000)
+		const timer = setInterval(() => void load(), ms)
 		onCleanup(() => {
 			disposed = true
 			clearInterval(timer)

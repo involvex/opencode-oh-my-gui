@@ -8,6 +8,7 @@ interface HookEntry {
 	tool: string
 	status: string
 	summary: string
+	detail: string
 	sessionID: string
 }
 
@@ -39,14 +40,62 @@ const sessionAgent = new Map<string, string>()
 const sessionModel = new Map<string, { modelID: string; providerID: string }>()
 const sessionDir = new Map<string, string>()
 const contextRows = new Map<string, ContextRow>()
+const gitCache = new Map<string, { branch: string; dirty: boolean; at: number }>()
+const GIT_TTL_MS = 5000
 
 function now() {
 	return new Date().toISOString()
 }
 
+function redact(text: string) {
+	if (!text) return ''
+	return String(text)
+		.replace(/(Bearer\s+)[A-Za-z0-9\-._~+/]+=*/gi, '$1[REDACTED]')
+		.replace(
+			/(api(?:_|-)?key|token|secret|password|passwd|authorization)(?:["']?\s*[:=]\s*["']?)([^"'\s,}]+)/gi,
+			'$1=[REDACTED]',
+		)
+}
+
+function summarize(value: unknown, max = 180) {
+	if (value == null) return ''
+	let s: string
+	if (typeof value === 'string') s = value
+	else {
+		try {
+			s = JSON.stringify(value)
+		} catch {
+			s = String(value)
+		}
+	}
+	s = redact(s).replace(/\s+/g, ' ').trim()
+	return s.length > max ? `${s.slice(0, max - 1)}…` : s
+}
+
 function pushHook(entry: HookEntry) {
 	hookLog.unshift(entry)
 	if (hookLog.length > MAX_HOOKS) hookLog.length = MAX_HOOKS
+}
+
+async function readGit(dir: string) {
+	if (!dir) return { branch: '', dirty: false }
+	const cached = gitCache.get(dir)
+	if (cached && Date.now() - cached.at < GIT_TTL_MS) return cached
+	const run = async (args: string[]) => {
+		try {
+			const proc = Bun.spawn(args, { cwd: dir, stdout: 'pipe', stderr: 'pipe' })
+			const out = await new Response(proc.stdout).text()
+			await proc.exited.catch(() => {})
+			return out.trim()
+		} catch {
+			return ''
+		}
+	}
+	const branch = await run(['git', 'rev-parse', '--abbrev-ref', 'HEAD'])
+	const status = await run(['git', 'status', '--porcelain'])
+	const result = { branch, dirty: !!status, at: Date.now() }
+	gitCache.set(dir, result)
+	return result
 }
 
 function logErr(label: string, err: unknown) {
@@ -434,13 +483,16 @@ export default Plugin.define({
 		// --- tool hooks: log ---
 		try {
 			const reg = await ctx.tool.hook('execute.before', (e: any) => {
+				const sid = String(e?.sessionID ?? '')
+				const tool = String(e?.tool ?? '')
 				pushHook({
 					ts: now(),
 					type: 'tool.before',
-					tool: String(e?.tool ?? ''),
+					tool,
 					status: 'pending',
-					summary: String(e?.tool ?? ''),
-					sessionID: String(e?.sessionID ?? ''),
+					summary: tool,
+					detail: summarize(e?.input),
+					sessionID: sid,
 				})
 			})
 			registrations.push(reg)
@@ -449,13 +501,17 @@ export default Plugin.define({
 		}
 		try {
 			const reg = await ctx.tool.hook('execute.after', (e: any) => {
+				const sid = String(e?.sessionID ?? '')
+				const tool = String(e?.tool ?? '')
+				const status = String((e?.status ?? e?.error) ? 'error' : 'completed')
 				pushHook({
 					ts: now(),
 					type: 'tool.after',
-					tool: String(e?.tool ?? ''),
-					status: String(e?.status ?? 'completed'),
-					summary: String(e?.tool ?? ''),
-					sessionID: String(e?.sessionID ?? ''),
+					tool,
+					status,
+					summary: tool,
+					detail: summarize(e?.output ?? e?.error ?? e?.result),
+					sessionID: sid,
 				})
 			})
 			registrations.push(reg)
@@ -476,12 +532,15 @@ export default Plugin.define({
 							const e = (ev && (ev.event ?? ev)) ?? ev
 							const type = String(e?.type ?? '')
 							const sid = String(e?.data?.sessionID ?? e?.sessionID ?? '')
+							const dir = String((ctx as any)?.location?.directory ?? '')
+							if (sid && dir) sessionDir.set(sid, dir)
 							pushHook({
 								ts: now(),
 								type: `event:${type}`,
 								tool: '',
 								status: 'info',
 								summary: type,
+								detail: sid ? `session ${sid.slice(0, 8)}` : '',
 								sessionID: sid,
 							})
 							if (type === 'session.created') {
@@ -528,12 +587,15 @@ export default Plugin.define({
 			const reg = await ctx.session.hook('prompt', (p: any) => {
 				try {
 					const sid = String(p?.sessionID ?? '')
+					const dir = String((ctx as any)?.location?.directory ?? '')
+					if (sid && dir) sessionDir.set(sid, dir)
 					pushHook({
 						ts: now(),
 						type: 'prompt',
 						tool: '',
 						status: 'info',
 						summary: 'prompt',
+						detail: '',
 						sessionID: sid,
 					})
 					if (sid && !contextRows.has(sid)) {
@@ -577,6 +639,43 @@ export default Plugin.define({
 						const sid = String(input?.sessionID ?? '')
 						const m = sessionModel.get(sid)
 						const row = contextRows.get(sid)
+						const dir = sessionDir.get(sid) ?? String((ctx as any)?.location?.directory ?? '')
+						if (sid && dir) sessionDir.set(sid, dir)
+						let gitBranch = ''
+						try {
+							const git = await readGit(dir)
+							gitBranch = git.branch ? (git.dirty ? `${git.branch}*` : git.branch) : ''
+						} catch {
+							/* ignore */
+						}
+						let mcp: string[] = []
+						try {
+							const mc = (ctx as any)?.mcp
+							if (mc && typeof mc.list === 'function') {
+								const res = await mc.list()
+								const list = Array.isArray(res) ? res : (res?.data ?? res?.servers ?? [])
+								mcp = list
+									.map((s: any) => String(s?.name ?? s?.id ?? s?.server ?? ''))
+									.filter(Boolean)
+							}
+						} catch {
+							/* ignore */
+						}
+						let todos = 0
+						try {
+							const sc = (ctx as any)?.session
+							if (sc && typeof sc.todo === 'function') {
+								const res = await sc.todo({ sessionID: sid })
+								const list = Array.isArray(res) ? res : (res?.data ?? res?.todos ?? [])
+								todos = Array.isArray(list) ? list.length : 0
+							} else if (sc && typeof sc.todos === 'function') {
+								const res = await sc.todos({ sessionID: sid })
+								const list = Array.isArray(res) ? res : (res?.data ?? res?.todos ?? [])
+								todos = Array.isArray(list) ? list.length : 0
+							}
+						} catch {
+							/* ignore */
+						}
 						return {
 							sessionID: sid,
 							data: {
@@ -585,10 +684,10 @@ export default Plugin.define({
 								agent: sessionAgent.get(sid) ?? row?.agent ?? '',
 								modelID: m?.modelID ?? row?.modelID ?? '',
 								providerID: m?.providerID ?? '',
-								directory: sessionDir.get(sid) ?? '',
-								gitBranch: '',
-								mcp: [],
-								todos: 0,
+								directory: dir,
+								gitBranch,
+								mcp,
+								todos,
 								updatedAt: row?.updatedAt ?? now(),
 							},
 						}
@@ -596,18 +695,38 @@ export default Plugin.define({
 					agents: async (input: any) => {
 						const sid = String(input?.sessionID ?? '')
 						const agents: any[] = []
+						const activeName = sessionAgent.get(sid) ?? ''
+						const toolNames = (a: any) => {
+							const raw = a?.tools ?? a?.allowedTools ?? a?.toolPermissions ?? a?.permissions?.tools
+							if (Array.isArray(raw)) {
+								return raw.map((t: any) => String(t?.name ?? t?.id ?? t)).filter(Boolean)
+							}
+							if (raw && typeof raw === 'object') {
+								return Object.entries(raw)
+									.filter(([, v]) => v !== false && v != null)
+									.map(([k]) => k)
+							}
+							return []
+						}
 						// best-effort: use ctx.agent if available
 						try {
 							if (ctx?.agent && typeof ctx.agent.list === 'function') {
 								const res: any = await ctx.agent.list()
 								const list = Array.isArray(res) ? res : (res?.data ?? res?.agents ?? [])
 								for (const a of list) {
+									const id = String(a?.id ?? a?.name ?? '')
+									const name = String(a?.name ?? a?.id ?? '')
 									agents.push({
-										id: String(a?.id ?? a?.name ?? ''),
-										name: String(a?.name ?? a?.id ?? ''),
+										id,
+										name,
+										description: summarize(a?.description ?? a?.prompt ?? '', 220),
+										mode: String(a?.mode ?? a?.type ?? ''),
 										modelID: String(a?.model?.id ?? a?.modelID ?? ''),
 										providerID: String(a?.model?.providerID ?? a?.providerID ?? ''),
-										active: (a?.id ?? a?.name) === (sessionAgent.get(sid) ?? ''),
+										active:
+											!!activeName &&
+											(id === activeName || name === activeName || a?.active === true),
+										tools: toolNames(a),
 									})
 								}
 							}
@@ -617,11 +736,14 @@ export default Plugin.define({
 						if (agents.length === 0) {
 							// fallback: at least current
 							agents.push({
-								id: sessionAgent.get(sid) ?? 'default',
-								name: sessionAgent.get(sid) ?? 'default',
+								id: activeName || 'default',
+								name: activeName || 'default',
+								description: '',
+								mode: '',
 								modelID: sessionModel.get(sid)?.modelID ?? '',
 								providerID: sessionModel.get(sid)?.providerID ?? '',
 								active: true,
+								tools: [],
 							})
 						}
 						return { sessionID: sid, agents }
@@ -779,7 +901,72 @@ export default Plugin.define({
 						const filtered = sid
 							? hookLog.filter((h) => h.sessionID === sid || h.sessionID === '')
 							: hookLog
-						return { sessionID: sid, entries: filtered.slice(0, limit) }
+						return {
+							sessionID: sid,
+							entries: filtered.slice(0, limit).map((e) => ({ ...e, detail: e.detail ?? '' })),
+						}
+					},
+					clearHooks: async (_input: any) => {
+						hookLog.length = 0
+						return { ok: true }
+					},
+					health: async (input: any) => {
+						const sid = String(input?.sessionID ?? '')
+						let row = contextRows.get(sid)
+						if (
+							row &&
+							(!row.usable || row.usable <= 0) &&
+							row.modelID &&
+							row.modelID !== 'unknown'
+						) {
+							await refreshModelLimits(ctx).catch(() => {})
+							const providerID = sessionModel.get(sid)?.providerID ?? ''
+							const lim = usableFor(providerID, row.modelID)
+							if (lim) {
+								row = { ...row, usable: lim.usable, reserve: lim.reserved }
+								contextRows.set(sid, row)
+							}
+						}
+						const totalTokens = row?.ctx ?? 0
+						const usable = row?.usable ?? 0
+						const reserve = row?.reserve ?? 0
+						const promptTokensEst = row
+							? row.user + row.system + row.toolSchemas + row.toolArgs + row.other
+							: 0
+						const outputTokensEst = row ? row.assistant + row.reasoning + row.toolOut : 0
+						const entries = sid
+							? hookLog.filter((h) => h.sessionID === sid || h.sessionID === '')
+							: hookLog
+						const hookErrors = entries.filter((h) => {
+							const s = String(h.status || '').toLowerCase()
+							return s === 'error' || s === 'failed' || h.type.includes('error')
+						}).length
+						const toolCalls = entries.filter((h) => h.type === 'tool.after').length
+						const lastHookAt = entries[0]?.ts ?? ''
+						let compactionRisk = 'unknown'
+						if (usable > 0 && totalTokens > 0) {
+							const pct = (totalTokens / usable) * 100
+							compactionRisk = pct >= 90 ? 'high' : pct >= 70 ? 'medium' : 'low'
+						} else if (totalTokens > 0) {
+							compactionRisk = 'unknown'
+						}
+						return {
+							sessionID: sid,
+							data: {
+								updatedAt: row?.updatedAt ?? now(),
+								lastHookAt,
+								hookCount: entries.length,
+								hookErrors,
+								toolCalls,
+								promptTokensEst,
+								outputTokensEst,
+								totalTokens,
+								usable,
+								reserve,
+								compactionRisk,
+								source: row?.source ?? 'none',
+							},
+						}
 					},
 				})
 				registrations.push(reg)

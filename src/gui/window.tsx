@@ -11,7 +11,7 @@ import {
 	type Command as CommandType,
 	type MenuItem as MenuItemType,
 } from '@opencode/plugin/gui'
-import { createSignal, onCleanup } from 'solid-js'
+import { createEffect, createSignal, onCleanup } from 'solid-js'
 import type { Plugin } from '@opencode/plugin/gui'
 import type { definition } from './definition'
 import { DashboardRpc } from '../rpc'
@@ -111,12 +111,12 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 			setPill(undefined)
 		}
 	}
-	void refreshPill()
-	const timer = setInterval(
-		() => void refreshPill(),
-		(ctx.stores.prefs.value as any).pollMs ?? 1500,
-	)
-	onCleanup(() => clearInterval(timer))
+	createEffect(() => {
+		const ms = Math.max(500, Number((ctx.stores.prefs.value as any).pollMs) || 1500)
+		void refreshPill()
+		const timer = setInterval(() => void refreshPill(), ms)
+		onCleanup(() => clearInterval(timer))
+	})
 
 	ctx.add(ComposerPill, () => ({
 		id: 'context',
@@ -346,6 +346,22 @@ function SettingsView(props: { target?: string }) {
 							Show Commit pill when there are uncommitted changes
 						</span>
 					</div>
+				</label>
+				<label style={{ display: 'flex', 'align-items': 'center', gap: '10px' }}>
+					<span style={{ 'font-size': '13px', 'min-width': '90px' }}>Poll (ms)</span>
+					<input
+						type="number"
+						min="500"
+						step="250"
+						value={Number(p.value.pollMs) || 1500}
+						onInput={(e) =>
+							p.set({
+								...p.value,
+								pollMs: Math.max(500, Number((e.target as HTMLInputElement).value) || 1500),
+							})
+						}
+						style={{ width: '110px' }}
+					/>
 				</label>
 			</div>
 			{props.target && (

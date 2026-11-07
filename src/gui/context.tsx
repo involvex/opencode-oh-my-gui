@@ -2,6 +2,7 @@
 import { For, Show, createEffect, createSignal, onCleanup } from 'solid-js'
 import { usePlugin } from '@opencode/plugin/gui'
 import type { MountedSession } from '@opencode/plugin/gui'
+import type { definition } from './definition'
 import { DashboardRpc } from '../rpc'
 
 /** key on the row, label, accent color */
@@ -34,13 +35,15 @@ const TRACK = {
 } as const
 
 export function ContextView(props: { session: MountedSession }) {
-	const ctx = usePlugin()
+	const ctx = usePlugin<typeof definition>()
 	const [rows, setRows] = createSignal<any[]>([])
+	const [health, setHealth] = createSignal<any>(null)
 	const [error, setError] = createSignal('')
 	const [loaded, setLoaded] = createSignal(false)
 
 	createEffect(() => {
 		const sessionID = props.session.id
+		const ms = Math.max(500, Number((ctx.stores.prefs.value as any).pollMs) || 1500)
 		let pending = false
 		let disposed = false
 		setLoaded(false)
@@ -51,9 +54,16 @@ export function ContextView(props: { session: MountedSession }) {
 			if (disposed || pending) return
 			pending = true
 			try {
-				const result = (await ctx.client.rpc(DashboardRpc).context({ sessionID })) as any
+				const [result, h] = await Promise.all([
+					ctx.client.rpc(DashboardRpc).context({ sessionID }) as any,
+					ctx.client
+						.rpc(DashboardRpc)
+						.health({ sessionID })
+						.catch(() => null) as any,
+				])
 				if (disposed) return
 				setRows(Array.isArray(result?.rows) ? result.rows : [])
+				setHealth(h?.data ?? null)
 				setError('')
 			} catch (err) {
 				if (disposed) return
@@ -64,7 +74,7 @@ export function ContextView(props: { session: MountedSession }) {
 			}
 		}
 		void load()
-		const timer = setInterval(() => void load(), 1500)
+		const timer = setInterval(() => void load(), ms)
 		onCleanup(() => {
 			disposed = true
 			clearInterval(timer)
@@ -236,6 +246,70 @@ export function ContextView(props: { session: MountedSession }) {
 										}}
 									</For>
 								</div>
+
+								<Show when={health()}>
+									{(h) => {
+										const risk = String(h().compactionRisk || 'unknown')
+										const riskTone =
+											risk === 'high'
+												? '#f87171'
+												: risk === 'medium'
+													? '#fbbf24'
+													: risk === 'low'
+														? '#22c55e'
+														: '#94a3b8'
+										return (
+											<div style={CARD}>
+												<div
+													style={{
+														display: 'flex',
+														'justify-content': 'space-between',
+														'align-items': 'center',
+													}}
+												>
+													<span style={{ 'font-size': '12px', 'font-weight': '500' }}>
+														Session health
+													</span>
+													<span style={{ 'font-size': '11px', color: riskTone }}>
+														compaction: {risk}
+													</span>
+												</div>
+												<div
+													style={{
+														display: 'grid',
+														'grid-template-columns': '1fr 1fr',
+														gap: '4px 10px',
+														'font-size': '11px',
+													}}
+												>
+													<div>
+														<span style={{ opacity: 0.65 }}>Hooks:</span> {fmt(h().hookCount || 0)}
+														{h().hookErrors ? (
+															<span style={{ color: '#f87171' }}> · {h().hookErrors} err</span>
+														) : null}
+													</div>
+													<div>
+														<span style={{ opacity: 0.65 }}>Tool calls:</span>{' '}
+														{fmt(h().toolCalls || 0)}
+													</div>
+													<div>
+														<span style={{ opacity: 0.65 }}>Prompt est.:</span>{' '}
+														{fmt(h().promptTokensEst || 0)}
+													</div>
+													<div>
+														<span style={{ opacity: 0.65 }}>Output est.:</span>{' '}
+														{fmt(h().outputTokensEst || 0)}
+													</div>
+													<div style={{ 'grid-column': '1 / -1', opacity: 0.65 }}>
+														Last hook:{' '}
+														{h().lastHookAt ? new Date(h().lastHookAt).toLocaleTimeString() : '—'}
+														{' · '}estimates only (no cost data)
+													</div>
+												</div>
+											</div>
+										)
+									}}
+								</Show>
 
 								<div style={{ 'font-size': '10px', opacity: 0.45 }}>
 									estimate · updated {new Date(row().updatedAt).toLocaleTimeString()}

@@ -21,9 +21,12 @@ const OVERVIEW_PROPERTIES = {
 const AGENT_PROPERTIES = {
 	id: { type: 'string' },
 	name: { type: 'string' },
+	description: { type: 'string' },
+	mode: { type: 'string' },
 	modelID: { type: 'string' },
 	providerID: { type: 'string' },
 	active: { type: 'boolean' },
+	tools: { type: 'array', items: { type: 'string' } },
 }
 
 const CONTEXT_ROW_PROPERTIES = {
@@ -54,6 +57,7 @@ const HOOK_ENTRY_PROPERTIES = {
 	tool: { type: 'string' },
 	status: { type: 'string' },
 	summary: { type: 'string' },
+	detail: { type: 'string' },
 	sessionID: { type: 'string' },
 }
 
@@ -149,6 +153,68 @@ export const DashboardRpc = Rpc.define({
 					},
 				},
 				required: ['sessionID', 'entries'],
+				additionalProperties: false,
+			},
+		},
+		clearHooks: {
+			input: {
+				type: 'object',
+				properties: { sessionID: { type: 'string' } },
+				required: ['sessionID'],
+				additionalProperties: false,
+			},
+			output: {
+				type: 'object',
+				properties: { ok: { type: 'boolean' } },
+				required: ['ok'],
+				additionalProperties: false,
+			},
+		},
+		health: {
+			input: {
+				type: 'object',
+				properties: { sessionID: { type: 'string' } },
+				required: ['sessionID'],
+				additionalProperties: false,
+			},
+			output: {
+				type: 'object',
+				properties: {
+					sessionID: { type: 'string' },
+					data: {
+						type: 'object',
+						properties: {
+							updatedAt: { type: 'string' },
+							lastHookAt: { type: 'string' },
+							hookCount: { type: 'number' },
+							hookErrors: { type: 'number' },
+							toolCalls: { type: 'number' },
+							promptTokensEst: { type: 'number' },
+							outputTokensEst: { type: 'number' },
+							totalTokens: { type: 'number' },
+							usable: { type: 'number' },
+							reserve: { type: 'number' },
+							compactionRisk: { type: 'string' },
+							source: { type: 'string' },
+						},
+						required: [
+							'updatedAt',
+							'lastHookAt',
+							'hookCount',
+							'hookErrors',
+							'toolCalls',
+							'promptTokensEst',
+							'outputTokensEst',
+							'totalTokens',
+							'usable',
+							'reserve',
+							'compactionRisk',
+							'source',
+						],
+						additionalProperties: false,
+					},
+				},
+				required: ['sessionID', 'data'],
 				additionalProperties: false,
 			},
 		},
