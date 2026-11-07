@@ -34,7 +34,7 @@ interface ContextRow {
 	stale: boolean
 }
 
-const MAX_HOOKS = 200
+let maxHooks = 200
 const hookLog: HookEntry[] = []
 const sessionAgent = new Map<string, string>()
 const sessionModel = new Map<string, { modelID: string; providerID: string }>()
@@ -74,7 +74,7 @@ function summarize(value: unknown, max = 180) {
 
 function pushHook(entry: HookEntry) {
 	hookLog.unshift(entry)
-	if (hookLog.length > MAX_HOOKS) hookLog.length = MAX_HOOKS
+	if (hookLog.length > maxHooks) hookLog.length = maxHooks
 }
 
 async function readGit(dir: string) {
@@ -967,6 +967,13 @@ export default Plugin.define({
 								source: row?.source ?? 'none',
 							},
 						}
+					},
+					config: async (input: any) => {
+						if (typeof input?.maxHooks === 'number' && Number.isFinite(input.maxHooks)) {
+							maxHooks = Math.max(20, Math.min(2000, Math.floor(input.maxHooks)))
+							if (hookLog.length > maxHooks) hookLog.length = maxHooks
+						}
+						return { maxHooks }
 					},
 				})
 				registrations.push(reg)

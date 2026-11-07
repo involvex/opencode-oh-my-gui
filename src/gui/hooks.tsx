@@ -18,7 +18,11 @@ export function HooksView(props: { session: MountedSession }) {
 		if (disposed() || pending.v || paused()) return
 		pending.v = true
 		try {
-			const result = (await ctx.client.rpc(DashboardRpc).hooks({ sessionID, limit: 80 })) as any
+			const limit = Math.max(
+				10,
+				Math.min(500, Number((ctx.stores.prefs.value as any).hooksFetchLimit) || 80),
+			)
+			const result = (await ctx.client.rpc(DashboardRpc).hooks({ sessionID, limit })) as any
 			if (disposed()) return
 			setEntries(Array.isArray(result?.entries) ? result.entries : [])
 			setError('')

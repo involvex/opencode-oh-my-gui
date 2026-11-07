@@ -11,7 +11,7 @@ import {
 	type Command as CommandType,
 	type MenuItem as MenuItemType,
 } from '@opencode/plugin/gui'
-import { createEffect, createSignal, onCleanup } from 'solid-js'
+import { Show, createEffect, createSignal, onCleanup } from 'solid-js'
 import type { Plugin } from '@opencode/plugin/gui'
 import type { definition } from './definition'
 import { DashboardRpc } from '../rpc'
@@ -228,6 +228,43 @@ function PanelShell(props: { session: MountedSession }) {
 function SettingsView(props: { target?: string }) {
 	const ctx = usePlugin<typeof definition>()
 	const p = ctx.stores.prefs as any
+	const [configNotice, setConfigNotice] = createSignal('')
+
+	const isTarget = (id: string) =>
+		props.target === id ||
+		(props.target === 'pill' && id === 'pill') ||
+		(props.target === 'hooks' && id === 'hooks')
+
+	const cardStyle = (id: string) => ({
+		display: 'flex',
+		'flex-direction': 'column' as const,
+		gap: '12px',
+		padding: '16px',
+		'border-radius': '8px',
+		border:
+			isTarget(id) && props.target
+				? '1px solid rgba(100, 149, 237, 0.45)'
+				: '1px solid var(--border, rgba(255,255,255,0.1))',
+		'background-color':
+			isTarget(id) && props.target
+				? 'rgba(100, 149, 237, 0.08)'
+				: 'var(--surface, rgba(255,255,255,0.02))',
+	})
+
+	const setPref = (patch: Record<string, unknown>) => p.set({ ...p.value, ...patch })
+
+	const applyServerMaxHooks = async (value: number) => {
+		const maxHooks = Math.max(20, Math.min(2000, Math.floor(value) || 200))
+		setPref({ maxHooks })
+		try {
+			await ctx.client.rpc(DashboardRpc).config({ maxHooks })
+			setConfigNotice(`Server hook retention: ${maxHooks}`)
+		} catch (err) {
+			setConfigNotice(err instanceof Error ? err.message : String(err))
+		}
+		setTimeout(() => setConfigNotice(''), 2000)
+	}
+
 	return (
 		<div
 			style={{
@@ -235,110 +272,130 @@ function SettingsView(props: { target?: string }) {
 				'flex-direction': 'column',
 				gap: '16px',
 				padding: '20px',
-				'max-width': '420px',
+				'max-width': '520px',
 			}}
 		>
 			<div style={{ display: 'flex', 'flex-direction': 'column', gap: '4px' }}>
 				<h2 style={{ margin: 0, 'font-size': '18px', 'font-weight': '600' }}>
 					{ctx.t('settings.title')}
 				</h2>
-				<p style={{ margin: 0, 'font-size': '12px', opacity: 0.7 }}>Configure panel visibility</p>
+				<p style={{ margin: 0, 'font-size': '12px', opacity: 0.7 }}>
+					Configure dashboard visibility, refresh cadence, and retention.
+				</p>
 			</div>
-			<div
-				style={{
-					display: 'flex',
-					'flex-direction': 'column',
-					gap: '12px',
-					padding: '16px',
-					'border-radius': '8px',
-					border: '1px solid var(--border, rgba(255,255,255,0.1))',
-					'background-color': 'var(--surface, rgba(255,255,255,0.02))',
-				}}
-			>
-				<div style={{ 'font-size': '13px', 'font-weight': '500', 'margin-bottom': '4px' }}>
-					Panel Tabs
+
+			<Show when={configNotice()}>
+				<div style={{ 'font-size': '12px', opacity: 0.75 }}>{configNotice()}</div>
+			</Show>
+
+			<div style={cardStyle('context')}>
+				<div style={{ 'font-size': '13px', 'font-weight': '500' }}>Context & refresh</div>
+				<label style={{ display: 'flex', 'align-items': 'center', gap: '10px', cursor: 'pointer' }}>
+					<input
+						type="checkbox"
+						checked={p.value.showContext !== false}
+						onChange={(e) => setPref({ showContext: (e.target as HTMLInputElement).checked })}
+					/>
+					<span style={{ 'font-size': '13px' }}>Show Context tab</span>
+				</label>
+				<label style={{ display: 'flex', 'align-items': 'center', gap: '10px' }}>
+					<span style={{ 'font-size': '13px', 'min-width': '150px' }}>Poll interval (ms)</span>
+					<input
+						type="number"
+						min="500"
+						max="30000"
+						step="250"
+						value={Number(p.value.pollMs) || 1500}
+						onInput={(e) =>
+							setPref({
+								pollMs: Math.max(
+									500,
+									Math.min(30000, Number((e.target as HTMLInputElement).value) || 1500),
+								),
+							})
+						}
+						style={{ width: '120px' }}
+					/>
+				</label>
+				<div style={{ 'font-size': '11px', opacity: 0.6 }}>
+					Applies to context/agents/hooks/info polling and the context pill.
 				</div>
+			</div>
+
+			<div style={cardStyle('agents')}>
+				<div style={{ 'font-size': '13px', 'font-weight': '500' }}>Panel tabs</div>
 				<label style={{ display: 'flex', 'align-items': 'center', gap: '10px', cursor: 'pointer' }}>
 					<input
 						type="checkbox"
-						checked={p.value.showContext}
-						onChange={(e) =>
-							p.set({ ...p.value, showContext: (e.target as HTMLInputElement).checked })
-						}
-						style={{ cursor: 'pointer' }}
+						checked={p.value.showAgents !== false}
+						onChange={(e) => setPref({ showAgents: (e.target as HTMLInputElement).checked })}
 					/>
-					<div style={{ display: 'flex', 'flex-direction': 'column', gap: '2px' }}>
-						<span style={{ 'font-size': '13px' }}>Context</span>
-						<span style={{ 'font-size': '11px', opacity: 0.6 }}>
-							Show context usage information
-						</span>
-					</div>
+					<span style={{ 'font-size': '13px' }}>Show Agents tab</span>
 				</label>
 				<label style={{ display: 'flex', 'align-items': 'center', gap: '10px', cursor: 'pointer' }}>
 					<input
 						type="checkbox"
-						checked={p.value.showAgents}
-						onChange={(e) =>
-							p.set({ ...p.value, showAgents: (e.target as HTMLInputElement).checked })
-						}
-						style={{ cursor: 'pointer' }}
+						checked={p.value.showHooks !== false}
+						onChange={(e) => setPref({ showHooks: (e.target as HTMLInputElement).checked })}
 					/>
-					<div style={{ display: 'flex', 'flex-direction': 'column', gap: '2px' }}>
-						<span style={{ 'font-size': '13px' }}>Agents</span>
-						<span style={{ 'font-size': '11px', opacity: 0.6 }}>Show available agents</span>
-					</div>
+					<span style={{ 'font-size': '13px' }}>Show Hooks tab</span>
 				</label>
 				<label style={{ display: 'flex', 'align-items': 'center', gap: '10px', cursor: 'pointer' }}>
 					<input
 						type="checkbox"
-						checked={p.value.showHooks}
-						onChange={(e) =>
-							p.set({ ...p.value, showHooks: (e.target as HTMLInputElement).checked })
-						}
-						style={{ cursor: 'pointer' }}
+						checked={p.value.showInfo !== false}
+						onChange={(e) => setPref({ showInfo: (e.target as HTMLInputElement).checked })}
 					/>
-					<div style={{ display: 'flex', 'flex-direction': 'column', gap: '2px' }}>
-						<span style={{ 'font-size': '13px' }}>Hooks</span>
-						<span style={{ 'font-size': '11px', opacity: 0.6 }}>Show hook activity log</span>
-					</div>
-				</label>
-				<label style={{ display: 'flex', 'align-items': 'center', gap: '10px', cursor: 'pointer' }}>
-					<input
-						type="checkbox"
-						checked={p.value.showInfo}
-						onChange={(e) =>
-							p.set({ ...p.value, showInfo: (e.target as HTMLInputElement).checked })
-						}
-						style={{ cursor: 'pointer' }}
-					/>
-					<div style={{ display: 'flex', 'flex-direction': 'column', gap: '2px' }}>
-						<span style={{ 'font-size': '13px' }}>Info</span>
-						<span style={{ 'font-size': '11px', opacity: 0.6 }}>Show session information</span>
-					</div>
+					<span style={{ 'font-size': '13px' }}>Show Info tab</span>
 				</label>
 			</div>
-			<div
-				style={{
-					display: 'flex',
-					'flex-direction': 'column',
-					gap: '12px',
-					padding: '16px',
-					'border-radius': '8px',
-					border: '1px solid var(--border, rgba(255,255,255,0.1))',
-					'background-color': 'var(--surface, rgba(255,255,255,0.02))',
-				}}
-			>
-				<div style={{ 'font-size': '13px', 'font-weight': '500', 'margin-bottom': '4px' }}>
-					{ctx.t('settings.pill')}
+
+			<div style={cardStyle('hooks')}>
+				<div style={{ 'font-size': '13px', 'font-weight': '500' }}>Hook retention & history</div>
+				<label style={{ display: 'flex', 'align-items': 'center', gap: '10px' }}>
+					<span style={{ 'font-size': '13px', 'min-width': '150px' }}>Server max hooks</span>
+					<input
+						type="number"
+						min="20"
+						max="2000"
+						step="20"
+						value={Number(p.value.maxHooks) || 200}
+						onChange={(e) => void applyServerMaxHooks(Number((e.target as HTMLInputElement).value))}
+						style={{ width: '120px' }}
+					/>
+				</label>
+				<label style={{ display: 'flex', 'align-items': 'center', gap: '10px' }}>
+					<span style={{ 'font-size': '13px', 'min-width': '150px' }}>Hooks fetch limit</span>
+					<input
+						type="number"
+						min="10"
+						max="500"
+						step="10"
+						value={Number(p.value.hooksFetchLimit) || 80}
+						onInput={(e) =>
+							setPref({
+								hooksFetchLimit: Math.max(
+									10,
+									Math.min(500, Number((e.target as HTMLInputElement).value) || 80),
+								),
+							})
+						}
+						style={{ width: '120px' }}
+					/>
+				</label>
+				<div style={{ 'font-size': '11px', opacity: 0.6 }}>
+					Server max hooks controls in-memory retention (best-effort). Fetch limit controls how many
+					entries the Hooks view requests.
 				</div>
+			</div>
+
+			<div style={cardStyle('pill')}>
+				<div style={{ 'font-size': '13px', 'font-weight': '500' }}>{ctx.t('settings.pill')}</div>
 				<label style={{ display: 'flex', 'align-items': 'center', gap: '10px', cursor: 'pointer' }}>
 					<input
 						type="checkbox"
 						checked={p.value.showCommit !== false}
-						onChange={(e) =>
-							p.set({ ...p.value, showCommit: (e.target as HTMLInputElement).checked })
-						}
-						style={{ cursor: 'pointer' }}
+						onChange={(e) => setPref({ showCommit: (e.target as HTMLInputElement).checked })}
 					/>
 					<div style={{ display: 'flex', 'flex-direction': 'column', gap: '2px' }}>
 						<span style={{ 'font-size': '13px' }}>{ctx.t('settings.showCommit')}</span>
@@ -347,36 +404,13 @@ function SettingsView(props: { target?: string }) {
 						</span>
 					</div>
 				</label>
-				<label style={{ display: 'flex', 'align-items': 'center', gap: '10px' }}>
-					<span style={{ 'font-size': '13px', 'min-width': '90px' }}>Poll (ms)</span>
-					<input
-						type="number"
-						min="500"
-						step="250"
-						value={Number(p.value.pollMs) || 1500}
-						onInput={(e) =>
-							p.set({
-								...p.value,
-								pollMs: Math.max(500, Number((e.target as HTMLInputElement).value) || 1500),
-							})
-						}
-						style={{ width: '110px' }}
-					/>
-				</label>
 			</div>
-			{props.target && (
-				<div
-					style={{
-						padding: '10px 12px',
-						'border-radius': '6px',
-						'background-color': 'var(--accent-bg, rgba(100, 149, 237, 0.1))',
-						border: '1px solid var(--accent-border, rgba(100, 149, 237, 0.3))',
-						'font-size': '12px',
-					}}
-				>
-					Highlighted: {props.target}
+
+			<Show when={props.target}>
+				<div style={{ 'font-size': '11px', opacity: 0.55 }}>
+					Settings target: <code>{props.target}</code>
 				</div>
-			)}
+			</Show>
 		</div>
 	)
 }

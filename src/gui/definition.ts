@@ -12,6 +12,8 @@ export const definition = Plugin.define({
 				showInfo: Schema.Boolean,
 				showCommit: Schema.optional(Schema.Boolean),
 				pollMs: Schema.Number,
+				maxHooks: Schema.optional(Schema.Number),
+				hooksFetchLimit: Schema.optional(Schema.Number),
 			}),
 			{
 				showContext: true,
@@ -20,6 +22,8 @@ export const definition = Plugin.define({
 				showInfo: true,
 				showCommit: true,
 				pollMs: 1500,
+				maxHooks: 200,
+				hooksFetchLimit: 80,
 			},
 		),
 	},

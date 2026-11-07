@@ -218,6 +218,19 @@ export const DashboardRpc = Rpc.define({
 				additionalProperties: false,
 			},
 		},
+		config: {
+			input: {
+				type: 'object',
+				properties: { maxHooks: { type: 'number' } },
+				additionalProperties: false,
+			},
+			output: {
+				type: 'object',
+				properties: { maxHooks: { type: 'number' } },
+				required: ['maxHooks'],
+				additionalProperties: false,
+			},
+		},
 	},
 	events: {},
 })
