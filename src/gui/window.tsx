@@ -29,7 +29,25 @@ const TAB: PanelTab = { id: PANEL_ID, title: TITLE, closable: 'compact', fallbac
 type DashTab = 'context' | 'agents' | 'hooks' | 'info'
 const [requestedTab, setRequestedTab] = createSignal<DashTab | null>(null)
 
+const FOCUS_STYLE_ID = 'oh-my-gui-focus-style'
+function ensureFocusStyles() {
+	if (typeof document === 'undefined' || document.getElementById(FOCUS_STYLE_ID)) return
+	const style = document.createElement('style')
+	style.id = FOCUS_STYLE_ID
+	style.textContent = `
+		.oh-my-gui-tab:focus-visible,
+		.oh-my-gui-btn:focus-visible,
+		[data-oh-my-gui] button:focus-visible,
+		[data-oh-my-gui] input:focus-visible {
+			outline: 2px solid rgba(100, 149, 237, 0.85);
+			outline-offset: 2px;
+		}
+	`
+	document.head.appendChild(style)
+}
+
 export const setup: Plugin.Setup<typeof definition> = (ctx) => {
+	ensureFocusStyles()
 	const key = `${ctx.id}:${PANEL_ID}`
 
 	const open = (session?: MountedSession, tab?: DashTab) => {
@@ -289,10 +307,43 @@ function PanelShell(props: { session: MountedSession }) {
 		}
 	})
 
+	const tabIds = () => (['context', 'agents', 'hooks', 'info'] as DashTab[]).filter(visible)
+	const onTabKeyDown = (e: KeyboardEvent) => {
+		const ids = tabIds()
+		if (ids.length === 0) return
+		const current = ids.indexOf(tab())
+		const move = (next: number) => {
+			const id = ids[(next + ids.length) % ids.length]
+			if (!id) return
+			setTab(id)
+			queueMicrotask(() => {
+				const el = (e.currentTarget as HTMLElement | null)?.querySelector<HTMLElement>(
+					`[role="tab"][aria-controls="oh-my-gui-panel-${id}"]`,
+				)
+				el?.focus()
+			})
+		}
+		if (e.key === 'ArrowRight') {
+			e.preventDefault()
+			move((current < 0 ? 0 : current) + 1)
+		} else if (e.key === 'ArrowLeft') {
+			e.preventDefault()
+			move((current < 0 ? 0 : current) - 1)
+		} else if (e.key === 'Home') {
+			e.preventDefault()
+			move(0)
+		} else if (e.key === 'End') {
+			e.preventDefault()
+			move(ids.length - 1)
+		}
+	}
+
 	const TabButton = (p: { id: DashTab; label: string }) => (
 		<button
 			type="button"
 			role="tab"
+			class="oh-my-gui-tab"
+			tabIndex={tab() === p.id ? 0 : -1}
 			aria-selected={tab() === p.id}
 			aria-controls={`oh-my-gui-panel-${p.id}`}
 			onClick={() => setTab(p.id)}
@@ -310,6 +361,7 @@ function PanelShell(props: { session: MountedSession }) {
 
 	return (
 		<div
+			data-oh-my-gui="panel"
 			style={{
 				display: 'flex',
 				'flex-direction': 'column',
@@ -321,6 +373,7 @@ function PanelShell(props: { session: MountedSession }) {
 			<div
 				role="tablist"
 				aria-label="Oh My GUI sections"
+				onKeyDown={onTabKeyDown}
 				style={{ display: 'flex', gap: '6px', 'flex-wrap': 'wrap' }}
 			>
 				<Show when={visible('context')}>

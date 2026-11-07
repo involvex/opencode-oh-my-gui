@@ -97,9 +97,15 @@ export function HooksView(props: { session: MountedSession }) {
 					onInput={(e) => setFilter((e.target as HTMLInputElement).value)}
 					style={{ 'flex-grow': '1', 'min-width': '140px' }}
 				/>
-				<button onClick={() => setPaused(!paused())}>{paused() ? 'Resume' : 'Pause'}</button>
-				<button onClick={() => void clear()}>Clear</button>
-				<button onClick={() => void exportJson()}>Export</button>
+				<button type="button" onClick={() => setPaused(!paused())}>
+					{paused() ? 'Resume' : 'Pause'}
+				</button>
+				<button type="button" onClick={() => void clear()}>
+					Clear
+				</button>
+				<button type="button" onClick={() => void exportJson()}>
+					Export
+				</button>
 			</div>
 			<Show when={notice()}>
 				<div style={{ 'font-size': '11px', opacity: 0.7 }}>{notice()}</div>

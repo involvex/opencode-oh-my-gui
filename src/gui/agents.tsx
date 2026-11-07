@@ -111,6 +111,7 @@ export function AgentsView(props: { session: MountedSession }) {
 										</Show>
 									</div>
 									<button
+										type="button"
 										style={{ 'font-size': '11px' }}
 										onClick={() => void copy(String(a.id || a.name || ''), 'agent ID')}
 										title="Copy agent ID"
