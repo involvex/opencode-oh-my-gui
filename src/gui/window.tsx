@@ -93,6 +93,56 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 		}))
 	}
 
+	ctx.add(Command, (): CommandType => ({
+		id: 'copy-diagnostics',
+		title: 'Copy Oh My GUI diagnostics bundle',
+		description: 'Copy sanitized overview, context, and recent hooks for bug reports',
+		keywords: 'oh my gui diagnostics report export logs copy',
+		section: 'terminal' as const,
+		enabled: !!ctx.sessions.current(),
+		run: async () => {
+			const session = ctx.sessions.current()
+			if (!session) return
+			try {
+				const client = ctx.client.rpc(DashboardRpc)
+				const [ov, ctxRes, hk] = await Promise.all([
+					client.overview({ sessionID: session.id }).catch(() => null),
+					client.context({ sessionID: session.id }).catch(() => null),
+					client.hooks({ sessionID: session.id, limit: 50 }).catch(() => null),
+				])
+				const bundle = {
+					generatedAt: new Date().toISOString(),
+					sessionID: session.id,
+					overview: (ov as any)?.data ?? null,
+					context: (ctxRes as any)?.rows ?? [],
+					hooks: (hk as any)?.entries ?? [],
+				}
+				const text = JSON.stringify(bundle, null, 2)
+				if (navigator?.clipboard?.writeText) {
+					await navigator.clipboard.writeText(text)
+					try {
+						ctx.toast.show({ title: 'Diagnostics copied (sanitized)', variant: 'success' } as any)
+					} catch {
+						/* ignore */
+					}
+				} else {
+					console.log(text)
+					try {
+						ctx.toast.show({ title: 'Diagnostics logged to console', variant: 'info' } as any)
+					} catch {
+						/* ignore */
+					}
+				}
+			} catch {
+				try {
+					ctx.toast.show({ title: 'Failed to copy diagnostics', variant: 'error' } as any)
+				} catch {
+					/* ignore */
+				}
+			}
+		},
+	}))
+
 	// composer pill
 	const [pill, setPill] = createSignal<
 		{ sessionID: string; label: string; tone?: 'warning' | 'danger' } | undefined

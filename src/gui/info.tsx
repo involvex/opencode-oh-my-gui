@@ -10,6 +10,7 @@ export function InfoView(props: { session: MountedSession }) {
 	const [data, setData] = createSignal<any>(null)
 	const [error, setError] = createSignal('')
 	const [loaded, setLoaded] = createSignal(false)
+	const [notice, setNotice] = createSignal('')
 
 	createEffect(() => {
 		const sessionID = props.session.id
@@ -43,9 +44,42 @@ export function InfoView(props: { session: MountedSession }) {
 		})
 	})
 
+	const copyDiagnostics = async () => {
+		try {
+			const client = ctx.client.rpc(DashboardRpc)
+			const [ov, ctxRes, hk] = await Promise.all([
+				client.overview({ sessionID: props.session.id }).catch(() => null),
+				client.context({ sessionID: props.session.id }).catch(() => null),
+				client.hooks({ sessionID: props.session.id, limit: 50 }).catch(() => null),
+			])
+			const bundle = {
+				generatedAt: new Date().toISOString(),
+				sessionID: props.session.id,
+				overview: (ov as any)?.data ?? d() ?? null,
+				context: (ctxRes as any)?.rows ?? [],
+				hooks: (hk as any)?.entries ?? [],
+			}
+			const text = JSON.stringify(bundle, null, 2)
+			if (navigator?.clipboard?.writeText) await navigator.clipboard.writeText(text)
+			else console.log(text)
+			setNotice('Diagnostics copied (sanitized)')
+		} catch (err) {
+			setNotice(err instanceof Error ? err.message : String(err))
+		}
+		setTimeout(() => setNotice(''), 1800)
+	}
+
 	const d = () => data()
 	return (
 		<div style={{ display: 'flex', 'flex-direction': 'column', gap: '6px', 'font-size': '12px' }}>
+			<div style={{ display: 'flex', gap: '8px', 'align-items': 'center', 'flex-wrap': 'wrap' }}>
+				<button type="button" onClick={() => void copyDiagnostics()}>
+					Copy diagnostics
+				</button>
+				<Show when={notice()}>
+					<span style={{ 'font-size': '11px', opacity: 0.7 }}>{notice()}</span>
+				</Show>
+			</div>
 			<Show when={loaded()} fallback={<div>Loading info...</div>}>
 				<Show when={error()}>
 					<div>Unavailable: {error()}</div>
