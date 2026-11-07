@@ -26,13 +26,16 @@ const ICON = 'window-analytics'
 const TITLE = 'Oh My GUI'
 
 const TAB: PanelTab = { id: PANEL_ID, title: TITLE, closable: 'compact', fallback: true }
+type DashTab = 'context' | 'agents' | 'hooks' | 'info'
+const [requestedTab, setRequestedTab] = createSignal<DashTab | null>(null)
 
 export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 	const key = `${ctx.id}:${PANEL_ID}`
 
-	const open = (session?: MountedSession) => {
+	const open = (session?: MountedSession, tab?: DashTab) => {
 		const ref = session ?? ctx.sessions.current()
 		if (!ref) return
+		if (tab) setRequestedTab(tab)
 		ctx.layout.open(key, ref, { tab: 'select' })
 	}
 	const toggle = (session?: MountedSession) => {
@@ -64,13 +67,31 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 		id: 'toggle',
 		title: ctx.t('command.toggle'),
 		description: 'Toggle the Oh My GUI side panel',
-		keywords: 'oh my gui panel agents context hooks',
+		keywords: 'oh my gui panel agents context hooks info dashboard',
 		section: 'terminal' as const,
 		bind: 'ctrl+`',
 		slash: { name: ctx.t('command.toggle.slash') },
 		enabled: !!ctx.sessions.current(),
 		run: () => toggle(),
 	}))
+
+	const tabCommands: Array<{ id: DashTab; title: string; keywords: string }> = [
+		{ id: 'context', title: 'Open Oh My GUI: Context', keywords: 'tokens usage health breakdown' },
+		{ id: 'agents', title: 'Open Oh My GUI: Agents', keywords: 'agents models tools' },
+		{ id: 'hooks', title: 'Open Oh My GUI: Hooks', keywords: 'hooks events tools log errors' },
+		{ id: 'info', title: 'Open Oh My GUI: Info', keywords: 'session info git mcp todos' },
+	]
+	for (const cmd of tabCommands) {
+		ctx.add(Command, (): CommandType => ({
+			id: `open.${cmd.id}`,
+			title: cmd.title,
+			description: 'Open the Oh My GUI panel and focus this tab',
+			keywords: `oh my gui dashboard ${cmd.keywords}`,
+			section: 'terminal' as const,
+			enabled: !!ctx.sessions.current(),
+			run: () => open(undefined, cmd.id),
+		}))
+	}
 
 	// composer pill
 	const [pill, setPill] = createSignal<
@@ -193,8 +214,50 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 
 function PanelShell(props: { session: MountedSession }) {
 	const ctx = usePlugin<typeof definition>()
-	const [tab, setTab] = createSignal<'context' | 'agents' | 'hooks' | 'info'>('context')
+	const [tab, setTab] = createSignal<DashTab>('context')
 	const prefs = () => ctx.stores.prefs.value as any
+
+	const visible = (id: DashTab) => {
+		const p = prefs()
+		if (id === 'context') return p.showContext !== false
+		if (id === 'agents') return p.showAgents !== false
+		if (id === 'hooks') return p.showHooks !== false
+		return p.showInfo !== false
+	}
+
+	createEffect(() => {
+		const req = requestedTab()
+		if (!req) return
+		if (visible(req)) setTab(req)
+		setRequestedTab(null)
+	})
+
+	createEffect(() => {
+		if (!visible(tab())) {
+			const first = (['context', 'agents', 'hooks', 'info'] as DashTab[]).find(visible)
+			if (first) setTab(first)
+		}
+	})
+
+	const TabButton = (p: { id: DashTab; label: string }) => (
+		<button
+			type="button"
+			role="tab"
+			aria-selected={tab() === p.id}
+			aria-controls={`oh-my-gui-panel-${p.id}`}
+			onClick={() => setTab(p.id)}
+			style={{
+				padding: '4px 8px',
+				'border-radius': '6px',
+				border: tab() === p.id ? '1px solid rgba(255,255,255,0.18)' : '1px solid transparent',
+				'background-color': tab() === p.id ? 'rgba(255,255,255,0.06)' : 'transparent',
+				cursor: 'pointer',
+			}}
+		>
+			{p.label}
+		</button>
+	)
+
 	return (
 		<div
 			style={{
@@ -205,21 +268,45 @@ function PanelShell(props: { session: MountedSession }) {
 				'font-size': '12px',
 			}}
 		>
-			<div style={{ display: 'flex', gap: '6px', 'flex-wrap': 'wrap' }}>
-				{prefs().showContext && (
-					<button onClick={() => setTab('context')}>{ctx.t('tab.context')}</button>
-				)}
-				{prefs().showAgents && (
-					<button onClick={() => setTab('agents')}>{ctx.t('tab.agents')}</button>
-				)}
-				{prefs().showHooks && <button onClick={() => setTab('hooks')}>{ctx.t('tab.hooks')}</button>}
-				{prefs().showInfo && <button onClick={() => setTab('info')}>{ctx.t('tab.info')}</button>}
+			<div
+				role="tablist"
+				aria-label="Oh My GUI sections"
+				style={{ display: 'flex', gap: '6px', 'flex-wrap': 'wrap' }}
+			>
+				<Show when={visible('context')}>
+					<TabButton id="context" label={ctx.t('tab.context')} />
+				</Show>
+				<Show when={visible('agents')}>
+					<TabButton id="agents" label={ctx.t('tab.agents')} />
+				</Show>
+				<Show when={visible('hooks')}>
+					<TabButton id="hooks" label={ctx.t('tab.hooks')} />
+				</Show>
+				<Show when={visible('info')}>
+					<TabButton id="info" label={ctx.t('tab.info')} />
+				</Show>
 			</div>
 			<div>
-				{tab() === 'context' && <ContextView session={props.session} />}
-				{tab() === 'agents' && <AgentsView session={props.session} />}
-				{tab() === 'hooks' && <HooksView session={props.session} />}
-				{tab() === 'info' && <InfoView session={props.session} />}
+				<Show when={tab() === 'context' && visible('context')}>
+					<div id="oh-my-gui-panel-context" role="tabpanel">
+						<ContextView session={props.session} />
+					</div>
+				</Show>
+				<Show when={tab() === 'agents' && visible('agents')}>
+					<div id="oh-my-gui-panel-agents" role="tabpanel">
+						<AgentsView session={props.session} />
+					</div>
+				</Show>
+				<Show when={tab() === 'hooks' && visible('hooks')}>
+					<div id="oh-my-gui-panel-hooks" role="tabpanel">
+						<HooksView session={props.session} />
+					</div>
+				</Show>
+				<Show when={tab() === 'info' && visible('info')}>
+					<div id="oh-my-gui-panel-info" role="tabpanel">
+						<InfoView session={props.session} />
+					</div>
+				</Show>
 			</div>
 		</div>
 	)
