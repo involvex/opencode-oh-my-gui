@@ -77,25 +77,46 @@ function pushHook(entry: HookEntry) {
 	if (hookLog.length > maxHooks) hookLog.length = maxHooks
 }
 
+const gitInflight = new Map<string, Promise<{ branch: string; dirty: boolean; at: number }>>()
+
 async function readGit(dir: string) {
 	if (!dir) return { branch: '', dirty: false }
 	const cached = gitCache.get(dir)
 	if (cached && Date.now() - cached.at < GIT_TTL_MS) return cached
-	const run = async (args: string[]) => {
-		try {
-			const proc = Bun.spawn(args, { cwd: dir, stdout: 'pipe', stderr: 'pipe' })
-			const out = await new Response(proc.stdout).text()
-			await proc.exited.catch(() => {})
-			return out.trim()
-		} catch {
-			return ''
+	const inflight = gitInflight.get(dir)
+	if (inflight) return inflight
+	const task = (async () => {
+		const run = async (args: string[]) => {
+			try {
+				const proc = Bun.spawn(args, {
+					cwd: dir,
+					stdout: 'pipe',
+					stderr: 'pipe',
+					stdin: 'ignore',
+					windowsHide: true,
+				})
+				const out = await new Response(proc.stdout).text()
+				const err = await new Response(proc.stderr).text().catch(() => '')
+				await proc.exited.catch(() => {})
+				// ignore expected non-repo errors; just return empty
+				if (err && !out) return ''
+				return out.trim()
+			} catch {
+				return ''
+			}
 		}
+		const branch = await run(['git', 'rev-parse', '--abbrev-ref', 'HEAD'])
+		const status = branch ? await run(['git', 'status', '--porcelain']) : ''
+		const result = { branch, dirty: !!status, at: Date.now() }
+		gitCache.set(dir, result)
+		return result
+	})()
+	gitInflight.set(dir, task)
+	try {
+		return await task
+	} finally {
+		gitInflight.delete(dir)
 	}
-	const branch = await run(['git', 'rev-parse', '--abbrev-ref', 'HEAD'])
-	const status = await run(['git', 'status', '--porcelain'])
-	const result = { branch, dirty: !!status, at: Date.now() }
-	gitCache.set(dir, result)
-	return result
 }
 
 function logErr(label: string, err: unknown) {
