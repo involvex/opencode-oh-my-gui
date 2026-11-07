@@ -8,11 +8,39 @@ Add to your `opencode.json` (global or per-project) using the V2 config format:
 
 ```json
 {
-	"plugins": [{ "package": "@involvex/oh-my-gui@latest" }]
+	"$schema": "https://opencode.ai/config.json",
+	"server": {
+		"hostname": "0.0.0.0",
+		"port": 4000
+	},
+	"plugins": [
+		{
+			"package": "@involvex/oh-my-gui@latest",
+			"options": {
+				"hostname": "0.0.0.0",
+				"port": 4000,
+				"url": "http://127.0.0.1:4000"
+			}
+		}
+	]
 }
 ```
 
 OpenCode will automatically install the plugin on next launch.
+
+### Server hostname / port
+
+This plugin does **not** open its own HTTP socket — OpenCode's service/`opencode serve` does.
+Defaults match `0.0.0.0:4000`. Configure them either:
+
+1. **Service (recommended for Desktop):**
+   `opencode service set hostname 0.0.0.0` then `opencode service set port 4000`
+2. **Plugin options** (above) — `hostname`/`port`/`url` are documented for your
+   own tooling; leave `contributeServer` false (default). Desktop plugin-owned
+   server rows cannot be removed from the UI.
+3. **Top-level `server`** in `opencode.json` — used by `opencode serve`
+
+V2 plugin shape is `{ "package", "options" }` (not the old `["pkg", opts]` tuple).
 
 ## Quick Start (Global Registration)
 

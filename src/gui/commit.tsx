@@ -46,7 +46,7 @@ export function useCommitChanges(ctx: SetupContext<unknown>) {
 	}
 }
 
-export async function sendCommit(session: MountedSession) {
+export async function sendCommit(session: MountedSession, fallbackPrompt?: string) {
 	const client = (session as any).server?.client as any
 	if (!client) throw new Error('No client')
 
@@ -71,7 +71,7 @@ export async function sendCommit(session: MountedSession) {
 	if (client.session?.prompt) {
 		return await client.session.prompt({
 			sessionID: (session as any).id,
-			text: COMMIT_FALLBACK_PROMPT,
+			text: fallbackPrompt?.trim() || COMMIT_FALLBACK_PROMPT,
 		})
 	}
 	throw new Error('Unable to send commit')

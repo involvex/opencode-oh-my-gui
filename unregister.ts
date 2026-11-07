@@ -8,7 +8,10 @@ const CONFIG_FILE = join(homedir(), '.config', 'opencode', 'opencode.json')
 const PLUGIN_ENTRY_PATH = resolve(dirname(import.meta.path), 'src', 'index.ts')
 const PLUGIN_URL = pathToFileURL(PLUGIN_ENTRY_PATH).href
 
-type PluginEntry = string | { package: string; options?: Record<string, unknown> }
+type PluginEntry =
+	| string
+	| { package: string; options?: Record<string, unknown> }
+	| [string, Record<string, unknown>]
 
 interface OpenCodeConfig {
 	$schema?: string
@@ -30,8 +33,18 @@ function readConfig(): OpenCodeConfig {
 	}
 }
 
-function isPluginEntry(entry: PluginEntry, url: string): boolean {
-	return typeof entry === 'object' && entry !== null && entry.package === url
+function pluginPackage(entry: PluginEntry): string | undefined {
+	if (typeof entry === 'string') return entry
+	if (Array.isArray(entry)) return entry[0]
+	if (entry && typeof entry === 'object' && typeof entry.package === 'string') {
+		return entry.package
+	}
+	return undefined
+}
+
+function isPluginEntry(entry: PluginEntry, _url: string): boolean {
+	const pkg = pluginPackage(entry)
+	return !!pkg && (pkg.includes('oh-my-gui') || pkg === PLUGIN_URL || pkg === PLUGIN_ENTRY_PATH)
 }
 
 p.intro('OpenCode Plugin Unregister')

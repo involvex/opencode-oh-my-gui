@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { Plugin } from '@opencode/plugin'
+import { resolveOptions } from './options'
 import { DashboardRpc } from './rpc'
 
 interface HookEntry {
@@ -344,7 +345,10 @@ export function estimateFromSessionMessages(messages: any[]): Breakdown {
 export default Plugin.define({
 	id: '@involvex/oh-my-gui',
 	async setup(ctx) {
-		console.log('[@involvex/oh-my-gui] server plugin initialized')
+		const endpoint = resolveOptions(ctx.options)
+		console.log(
+			`[@involvex/oh-my-gui] server plugin initialized (bind ${endpoint.hostname}:${endpoint.port}, connect ${endpoint.url})`,
+		)
 
 		const registrations: { dispose?: () => void | Promise<void> }[] = []
 

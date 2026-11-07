@@ -11,7 +11,7 @@ import {
 	type Command as CommandType,
 	type MenuItem as MenuItemType,
 } from '@opencode/plugin/gui'
-import { Show, createEffect, createSignal, onCleanup } from 'solid-js'
+import { Show, createEffect, createSignal, onCleanup, untrack } from 'solid-js'
 import type { Plugin } from '@opencode/plugin/gui'
 import type { definition } from './definition'
 import { DashboardRpc } from '../rpc'
@@ -163,48 +163,111 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 
 	// composer pill
 	const [pill, setPill] = createSignal<
-		{ sessionID: string; label: string; tone?: 'warning' | 'danger' } | undefined
+		| {
+				sessionID: string
+				label: string
+				tone?: 'warning' | 'danger'
+				title: string
+		  }
+		| undefined
 	>(undefined)
+	const withTimeout = async <T,>(promise: Promise<T>, ms: number): Promise<T> => {
+		let timer: ReturnType<typeof setTimeout> | undefined
+		try {
+			return await Promise.race([
+				promise,
+				new Promise<T>((_, reject) => {
+					timer = setTimeout(() => reject(new Error(`Request timed out after ${ms}ms`)), ms)
+				}),
+			])
+		} finally {
+			if (timer) clearTimeout(timer)
+		}
+	}
+
 	const refreshPill = async () => {
 		const session = ctx.sessions.current()
 		if (!session) {
 			setPill(undefined)
-			return
+			return true
 		}
 		try {
-			const result = (await ctx.client.rpc(DashboardRpc).context({ sessionID: session.id })) as any
+			const result = (await withTimeout(
+				ctx.client.rpc(DashboardRpc).context({ sessionID: session.id }),
+				8000,
+			)) as any
 			const row = result?.rows?.[0]
 			if (!row) {
 				setPill(undefined)
-				return
+				return true
 			}
 			if (row.usable && row.usable > 0) {
 				const share = (row.ctx / row.usable) * 100
+				const risk = share >= 90 ? 'high' : share >= 70 ? 'medium' : 'low'
 				setPill({
 					sessionID: session.id,
 					label: `${share.toFixed(0)}% ctx`,
 					tone: share >= 90 ? 'danger' : share >= 70 ? 'warning' : undefined,
+					title:
+						risk === 'high'
+							? `Context ${share.toFixed(0)}% used — compaction risk high (may be stale if updates fail)`
+							: risk === 'medium'
+								? `Context ${share.toFixed(0)}% used — compaction risk rising`
+								: `Context ${share.toFixed(0)}% used`,
 				})
-				return
+				return true
 			}
 			if (row.ctx && row.ctx > 0) {
 				setPill({
 					sessionID: session.id,
 					label: `${row.ctx >= 1000 ? (row.ctx / 1000).toFixed(1) + 'k' : row.ctx} ctx`,
 					tone: undefined,
+					title: `Context estimate: ${row.ctx.toLocaleString()} tokens (model limit unknown)`,
 				})
-				return
+				return true
 			}
 			setPill(undefined)
+			return true
 		} catch {
-			setPill(undefined)
+			// keep last known pill on transient failures
+			const current = pill()
+			if (current && current.sessionID !== session.id) setPill(undefined)
+			return false
 		}
 	}
+	// One-shot mount: do not track sessions/prefs here. Sync void tick() used to
+	// subscribe to refreshing/sessions and recurse until the stack blew.
 	createEffect(() => {
-		const ms = Math.max(500, Number((ctx.stores.prefs.value as any).pollMs) || 1500)
-		void refreshPill()
-		const timer = setInterval(() => void refreshPill(), ms)
-		onCleanup(() => clearInterval(timer))
+		let disposed = false
+		let timer: ReturnType<typeof setTimeout> | undefined
+		let failures = 0
+		const schedule = (ok: boolean) => {
+			if (disposed) return
+			if (timer !== undefined) clearTimeout(timer)
+			const pref = untrack(() =>
+				Math.max(1000, Number((ctx.stores.prefs.value as any).pollMs) || 5000),
+			)
+			const base = Math.max(5000, pref * 2)
+			const backoff = ok ? 0 : Math.min(60000, base * Math.pow(2, Math.min(failures, 4)))
+			timer = setTimeout(() => void tick(), ok ? base : Math.max(base, backoff))
+		}
+		const tick = async () => {
+			if (disposed) return
+			if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+				schedule(true)
+				return
+			}
+			const ok = await refreshPill()
+			if (disposed) return
+			if (ok) failures = 0
+			else failures += 1
+			schedule(ok)
+		}
+		timer = setTimeout(() => void tick(), 0)
+		onCleanup(() => {
+			disposed = true
+			if (timer !== undefined) clearTimeout(timer)
+		})
 	})
 
 	ctx.add(ComposerPill, () => ({
@@ -216,7 +279,7 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 				label: current.label,
 				icon: ICON,
 				tone: current.tone,
-				title: 'Context window usage',
+				title: current.title,
 				run: () => open(session as any),
 			}
 		},
@@ -228,9 +291,21 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 	const runCommit = async (session: MountedSession) => {
 		const key = session.key
 		if (busy() === key) return
+		const prefs = ctx.stores.prefs.value as any
+		const { count, files } = commitState(session)
+		const threshold = Math.max(0, Number(prefs.commitConfirmThreshold) || 0)
+		if (threshold > 0 && count >= threshold) {
+			const preview = files.slice(0, 8).join('\n')
+			const more = files.length > 8 ? `\n… and ${files.length - 8} more` : ''
+			const ok =
+				typeof globalThis.confirm === 'function'
+					? globalThis.confirm(`Send /commit for ${count} changed file(s)?\n\n${preview}${more}`)
+					: true
+			if (!ok) return
+		}
 		setBusy(key)
 		try {
-			await sendCommit(session)
+			await sendCommit(session, typeof prefs.commitPrompt === 'string' ? prefs.commitPrompt : '')
 		} catch {
 			try {
 				ctx.toast.show({ title: ctx.t('toast.commit.failed'), variant: 'error' } as any)
@@ -248,14 +323,18 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 		show: ({ session }) => {
 			const prefs = ctx.stores.prefs.value as any
 			if (prefs.showCommit === false) return undefined
-			const { count } = commitState(session)
+			const { count, files } = commitState(session)
 			const pending = busy() === session.key
 			if (count === 0 && !pending) return undefined
+			const preview = files.slice(0, 5).join(', ')
+			const more = files.length > 5 ? `, +${files.length - 5} more` : ''
 			return {
 				label: pending ? ctx.t('pill.commit.busy') : `${ctx.t('pill.commit')} ${count}`,
 				icon: 'check',
 				tone: pending ? 'warning' : undefined,
-				title: ctx.t('pill.commit.title'),
+				title: pending
+					? ctx.t('pill.commit.title')
+					: `${ctx.t('pill.commit.title')}${preview ? `\n${preview}${more}` : ''}`,
 				run: () => void runCommit(session as MountedSession),
 			}
 		},
@@ -494,15 +573,15 @@ function SettingsView(props: { target?: string }) {
 					<span style={{ 'font-size': '13px', 'min-width': '150px' }}>Poll interval (ms)</span>
 					<input
 						type="number"
-						min="500"
+						min="2000"
 						max="30000"
-						step="250"
-						value={Number(p.value.pollMs) || 1500}
+						step="500"
+						value={Number(p.value.pollMs) || 5000}
 						onInput={(e) =>
 							setPref({
 								pollMs: Math.max(
-									500,
-									Math.min(30000, Number((e.target as HTMLInputElement).value) || 1500),
+									2000,
+									Math.min(30000, Number((e.target as HTMLInputElement).value) || 5000),
 								),
 							})
 						}
@@ -510,7 +589,8 @@ function SettingsView(props: { target?: string }) {
 					/>
 				</label>
 				<div style={{ 'font-size': '11px', opacity: 0.6 }}>
-					Applies to context/agents/hooks/info polling and the context pill.
+					Panel tabs poll at this interval (min 2s). The context pill polls at least 2× slower and
+					pauses while the window is hidden.
 				</div>
 			</div>
 
@@ -592,9 +672,47 @@ function SettingsView(props: { target?: string }) {
 					<div style={{ display: 'flex', 'flex-direction': 'column', gap: '2px' }}>
 						<span style={{ 'font-size': '13px' }}>{ctx.t('settings.showCommit')}</span>
 						<span style={{ 'font-size': '11px', opacity: 0.6 }}>
-							Show Commit pill when there are uncommitted changes
+							Show Commit pill when there are uncommitted changes (tooltip lists files)
 						</span>
 					</div>
+				</label>
+				<label style={{ display: 'flex', 'align-items': 'center', gap: '10px' }}>
+					<span style={{ 'font-size': '13px', 'min-width': '150px' }}>
+						{ctx.t('settings.commitConfirm')}
+					</span>
+					<input
+						type="number"
+						min="0"
+						max="500"
+						step="1"
+						value={Math.max(0, Number(p.value.commitConfirmThreshold) || 0)}
+						onInput={(e) =>
+							setPref({
+								commitConfirmThreshold: Math.max(
+									0,
+									Math.min(500, Math.floor(Number((e.target as HTMLInputElement).value) || 0)),
+								),
+							})
+						}
+						style={{ width: '90px' }}
+						title="0 disables confirmation"
+					/>
+				</label>
+				<label style={{ display: 'flex', 'flex-direction': 'column', gap: '4px' }}>
+					<span style={{ 'font-size': '13px' }}>{ctx.t('settings.commitPrompt')}</span>
+					<textarea
+						value={typeof p.value.commitPrompt === 'string' ? p.value.commitPrompt : ''}
+						onInput={(e) => setPref({ commitPrompt: (e.target as HTMLTextAreaElement).value })}
+						placeholder="Leave blank to use the built-in conventional commit prompt (no push)"
+						rows={3}
+						style={{
+							width: '100%',
+							'font-size': '12px',
+							padding: '6px',
+							'border-radius': '6px',
+							resize: 'vertical',
+						}}
+					/>
 				</label>
 			</div>
 
