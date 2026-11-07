@@ -475,7 +475,9 @@ function SettingsView(props: { target?: string }) {
 			</div>
 
 			<Show when={configNotice()}>
-				<div style={{ 'font-size': '12px', opacity: 0.75 }}>{configNotice()}</div>
+				<div role="status" aria-live="polite" style={{ 'font-size': '12px', opacity: 0.75 }}>
+					{configNotice()}
+				</div>
 			</Show>
 
 			<div style={cardStyle('context')}>

@@ -59,11 +59,22 @@ export function AgentsView(props: { session: MountedSession }) {
 	return (
 		<div style={{ display: 'flex', 'flex-direction': 'column', gap: '8px' }}>
 			<Show when={notice()}>
-				<div style={{ 'font-size': '11px', opacity: 0.7 }}>{notice()}</div>
+				<div role="status" aria-live="polite" style={{ 'font-size': '11px', opacity: 0.7 }}>
+					{notice()}
+				</div>
 			</Show>
-			<Show when={loaded()} fallback={<div>Loading agents...</div>}>
+			<Show
+				when={loaded()}
+				fallback={
+					<div role="status" aria-live="polite">
+						Loading agents...
+					</div>
+				}
+			>
 				<Show when={error()}>
-					<div style={{ color: '#f87171' }}>Unavailable: {error()}</div>
+					<div role="alert" style={{ color: '#f87171' }}>
+						Unavailable: {error()}
+					</div>
 				</Show>
 				<For each={agents()}>
 					{(a) => {

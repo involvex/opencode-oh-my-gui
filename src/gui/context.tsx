@@ -93,10 +93,14 @@ export function ContextView(props: { session: MountedSession }) {
 		<div style={{ display: 'flex', 'flex-direction': 'column', gap: '10px' }}>
 			<Show
 				when={loaded()}
-				fallback={<div style={{ opacity: 0.7, 'font-size': '12px' }}>Loading context...</div>}
+				fallback={
+					<div role="status" aria-live="polite" style={{ opacity: 0.7, 'font-size': '12px' }}>
+						Loading context...
+					</div>
+				}
 			>
 				<Show when={error()}>
-					<div style={{ 'font-size': '12px', color: '#f87171' }}>
+					<div role="alert" style={{ 'font-size': '12px', color: '#f87171' }}>
 						Server unavailable: {error()} (retrying)
 					</div>
 				</Show>

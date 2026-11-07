@@ -77,12 +77,21 @@ export function InfoView(props: { session: MountedSession }) {
 					Copy diagnostics
 				</button>
 				<Show when={notice()}>
-					<span style={{ 'font-size': '11px', opacity: 0.7 }}>{notice()}</span>
+					<span role="status" aria-live="polite" style={{ 'font-size': '11px', opacity: 0.7 }}>
+						{notice()}
+					</span>
 				</Show>
 			</div>
-			<Show when={loaded()} fallback={<div>Loading info...</div>}>
+			<Show
+				when={loaded()}
+				fallback={
+					<div role="status" aria-live="polite">
+						Loading info...
+					</div>
+				}
+			>
 				<Show when={error()}>
-					<div>Unavailable: {error()}</div>
+					<div role="alert">Unavailable: {error()}</div>
 				</Show>
 				<Show when={d()}>
 					{(x) => (

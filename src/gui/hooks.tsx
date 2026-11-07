@@ -92,6 +92,7 @@ export function HooksView(props: { session: MountedSession }) {
 		<div style={{ display: 'flex', 'flex-direction': 'column', gap: '6px' }}>
 			<div style={{ display: 'flex', gap: '6px', 'flex-wrap': 'wrap', 'align-items': 'center' }}>
 				<input
+					aria-label="Filter hooks by type, tool, status, or detail"
 					placeholder="filter type/tool/status/detail"
 					value={filter()}
 					onInput={(e) => setFilter((e.target as HTMLInputElement).value)}
@@ -108,11 +109,22 @@ export function HooksView(props: { session: MountedSession }) {
 				</button>
 			</div>
 			<Show when={notice()}>
-				<div style={{ 'font-size': '11px', opacity: 0.7 }}>{notice()}</div>
+				<div role="status" aria-live="polite" style={{ 'font-size': '11px', opacity: 0.7 }}>
+					{notice()}
+				</div>
 			</Show>
-			<Show when={loaded()} fallback={<div>Loading hooks...</div>}>
+			<Show
+				when={loaded()}
+				fallback={
+					<div role="status" aria-live="polite">
+						Loading hooks...
+					</div>
+				}
+			>
 				<Show when={error()}>
-					<div style={{ color: '#f87171' }}>Unavailable: {error()}</div>
+					<div role="alert" style={{ color: '#f87171' }}>
+						Unavailable: {error()}
+					</div>
 				</Show>
 				<div style={{ 'max-height': '320px', overflow: 'auto', 'font-size': '11px' }}>
 					<For each={filtered()}>
