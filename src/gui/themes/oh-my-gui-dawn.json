@@ -1,0 +1,31 @@
+{
+	"$schema": "https://opencode.ai/desktop-theme.json",
+	"name": "Oh My GUI Dawn",
+	"id": "oh-my-gui-dawn",
+	"light": {
+		"palette": {
+			"neutral": "#faf7f2",
+			"ink": "#2a241c",
+			"primary": "#b56a3c",
+			"success": "#4d8b5a",
+			"warning": "#c4922a",
+			"error": "#b54a4a",
+			"info": "#5a7d9a",
+			"accent": "#9a6b4a",
+			"interactive": "#b56a3c"
+		}
+	},
+	"dark": {
+		"palette": {
+			"neutral": "#1a1612",
+			"ink": "#f0e6d8",
+			"primary": "#e0a070",
+			"success": "#7dba88",
+			"warning": "#e0b860",
+			"error": "#e08080",
+			"info": "#8aabb8",
+			"accent": "#c49870",
+			"interactive": "#e0a070"
+		}
+	}
+}

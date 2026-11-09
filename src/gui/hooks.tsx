@@ -5,6 +5,7 @@ import type { MountedSession } from '@opencode/plugin/gui'
 import type { definition } from './definition'
 import { DashboardRpc } from '../rpc'
 import { createSessionPoll } from './poll'
+import { tok } from './tokens'
 
 type HookPreset = 'all' | 'errors' | 'tools' | 'events' | 'prompt'
 
@@ -145,11 +146,8 @@ export function HooksView(props: { session: MountedSession }) {
 				'font-size': '11px',
 				padding: '2px 8px',
 				'border-radius': '999px',
-				border:
-					preset() === p.id
-						? '1px solid rgba(255,255,255,0.22)'
-						: '1px solid rgba(255,255,255,0.08)',
-				'background-color': preset() === p.id ? 'rgba(255,255,255,0.08)' : 'transparent',
+				border: `1px solid ${tok.border}`,
+				'background-color': preset() === p.id ? tok.surfaceRaised : 'transparent',
 				cursor: 'pointer',
 			}}
 		>
@@ -221,7 +219,7 @@ export function HooksView(props: { session: MountedSession }) {
 				}
 			>
 				<Show when={error()}>
-					<div role="alert" style={{ color: '#f87171', 'font-size': '11px' }}>
+					<div role="alert" style={{ color: tok.error, 'font-size': '11px' }}>
 						Unavailable: {error()}
 						{failures() > 1 ? ` (attempt ${failures()})` : ''} · retrying
 					</div>
@@ -234,11 +232,11 @@ export function HooksView(props: { session: MountedSession }) {
 								<div
 									style={{
 										padding: '4px 0',
-										'border-bottom': '1px solid rgba(255,255,255,0.06)',
+										'border-bottom': `1px solid ${tok.border}`,
 										display: 'flex',
 										'flex-direction': 'column',
 										gap: '1px',
-										'background-color': isErr ? 'rgba(248,113,113,0.04)' : 'transparent',
+										'background-color': isErr ? tok.surface : 'transparent',
 									}}
 								>
 									<div>
@@ -246,7 +244,7 @@ export function HooksView(props: { session: MountedSession }) {
 										<span style={{ 'font-weight': '600' }}>{e.type}</span>
 										{e.tool ? <span> · {e.tool}</span> : null}
 										{e.status ? (
-											<span style={{ color: isErr ? '#f87171' : 'inherit' }}> [{e.status}]</span>
+											<span style={{ color: isErr ? tok.error : 'inherit' }}> [{e.status}]</span>
 										) : null}
 									</div>
 									<Show when={e.detail}>

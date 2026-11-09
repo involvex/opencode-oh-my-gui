@@ -1,10 +1,12 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import {
+	CodeBlockAction,
 	Command,
 	ComposerPill,
 	MenuItem,
 	Panel,
 	SettingsPage,
+	Theme,
 	usePlugin,
 	type PanelTab,
 	type MountedSession,
@@ -20,8 +22,13 @@ import { AgentsView } from './agents'
 import { HooksView } from './hooks'
 import { InfoView } from './info'
 import { sendCommit, useCommitChanges } from './commit'
+import { normalizeShellCode, runInTerminal } from './run-shell'
+import ohMyGuiTheme from './themes/oh-my-gui.json'
+import ohMyGuiDawnTheme from './themes/oh-my-gui-dawn.json'
+import { tok } from './tokens'
 
 const PANEL_ID = 'main'
+const PANEL_WIDTH = 380
 const ICON = 'window-analytics'
 const TITLE = 'Oh My GUI'
 
@@ -39,7 +46,7 @@ function ensureFocusStyles() {
 		.oh-my-gui-btn:focus-visible,
 		[data-oh-my-gui] button:focus-visible,
 		[data-oh-my-gui] input:focus-visible {
-			outline: 2px solid rgba(100, 149, 237, 0.85);
+			outline: 2px solid var(--primary, rgba(100, 149, 237, 0.85));
 			outline-offset: 2px;
 		}
 	`
@@ -49,6 +56,53 @@ function ensureFocusStyles() {
 export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 	ensureFocusStyles()
 	const key = `${ctx.id}:${PANEL_ID}`
+	const ui = ctx.ui
+
+	ctx.add(Theme, ohMyGuiTheme)
+	ctx.add(Theme, ohMyGuiDawnTheme)
+
+	ctx.add(CodeBlockAction, {
+		id: 'run',
+		languages: ['sh', 'bash', 'shell', 'zsh', 'powershell', 'ps1', 'pwsh', 'cmd'],
+		icon: 'terminal',
+		get title() {
+			return ctx.t('codeblock.run')
+		},
+		run: async (input) => {
+			const code = normalizeShellCode(input.code)
+			if (!code) {
+				try {
+					ctx.toast.show({ title: ctx.t('toast.shell.empty'), variant: 'warning' } as any)
+				} catch {
+					/* ignore */
+				}
+				return
+			}
+			const session = (input.session as MountedSession | undefined) ?? ctx.sessions.current()
+			if (!session) {
+				try {
+					ctx.toast.show({ title: ctx.t('toast.shell.failed'), variant: 'error' } as any)
+				} catch {
+					/* ignore */
+				}
+				return
+			}
+			try {
+				await runInTerminal(code, session)
+				try {
+					ctx.toast.show({ title: ctx.t('toast.shell.ran'), variant: 'success' } as any)
+				} catch {
+					/* ignore */
+				}
+			} catch {
+				try {
+					ctx.toast.show({ title: ctx.t('toast.shell.failed'), variant: 'error' } as any)
+				} catch {
+					/* ignore */
+				}
+			}
+		},
+	})
 
 	const open = (session?: MountedSession, tab?: DashTab) => {
 		const ref = session ?? ctx.sessions.current()
@@ -62,9 +116,34 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 		ctx.layout.toggle(key, ref)
 	}
 
+	// Auto-open on newly added session tabs (seed first tick so restored tabs stay closed).
+	const seenSessions = new Set<string>()
+	let autoOpenSeeded = false
+	createEffect(() => {
+		const list = ctx.sessions.list()
+		const autoOpen = (ctx.stores.prefs.value as any).autoOpen !== false
+		if (!autoOpenSeeded) {
+			for (const s of list) seenSessions.add(s.id)
+			autoOpenSeeded = true
+			return
+		}
+		const live = new Set(list.map((s) => s.id))
+		for (const id of [...seenSessions]) {
+			if (!live.has(id)) seenSessions.delete(id)
+		}
+		for (const s of list) {
+			if (seenSessions.has(s.id)) continue
+			seenSessions.add(s.id)
+			if (!autoOpen) continue
+			if (ctx.layout.state(key, s) !== 'closed') continue
+			ctx.layout.open(key, s, { tab: 'select', background: true })
+		}
+	})
+
 	ctx.add(Panel, {
 		id: PANEL_ID,
 		region: 'side',
+		width: PANEL_WIDTH,
 		wide: true,
 		list: (input) => (input.open.includes(PANEL_ID) ? [TAB] : []),
 		render: (props) => <PanelShell session={props.session} />,
@@ -161,7 +240,6 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 		},
 	}))
 
-	// composer pill
 	const [pill, setPill] = createSignal<
 		| {
 				sessionID: string
@@ -171,6 +249,8 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 		  }
 		| undefined
 	>(undefined)
+	const contextWarned = new Set<string>()
+
 	const withTimeout = async <T,>(promise: Promise<T>, ms: number): Promise<T> => {
 		let timer: ReturnType<typeof setTimeout> | undefined
 		try {
@@ -182,6 +262,28 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 			])
 		} finally {
 			if (timer) clearTimeout(timer)
+		}
+	}
+
+	const maybeWarnContext = (sessionID: string, share: number) => {
+		const warnAt = Math.max(
+			0,
+			Math.min(100, Number((ctx.stores.prefs.value as any).contextWarnAt) || 0),
+		)
+		if (warnAt <= 0) return
+		if (share < warnAt) {
+			contextWarned.delete(sessionID)
+			return
+		}
+		if (contextWarned.has(sessionID)) return
+		contextWarned.add(sessionID)
+		try {
+			ctx.toast.show({
+				title: ctx.t('toast.context.warn', { pct: String(Math.round(share)) }),
+				variant: 'warning',
+			} as any)
+		} catch {
+			/* ignore */
 		}
 	}
 
@@ -204,6 +306,7 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 			if (row.usable && row.usable > 0) {
 				const share = (row.ctx / row.usable) * 100
 				const risk = share >= 90 ? 'high' : share >= 70 ? 'medium' : 'low'
+				maybeWarnContext(session.id, share)
 				setPill({
 					sessionID: session.id,
 					label: `${share.toFixed(0)}% ctx`,
@@ -229,14 +332,12 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 			setPill(undefined)
 			return true
 		} catch {
-			// keep last known pill on transient failures
 			const current = pill()
 			if (current && current.sessionID !== session.id) setPill(undefined)
 			return false
 		}
 	}
-	// One-shot mount: do not track sessions/prefs here. Sync void tick() used to
-	// subscribe to refreshing/sessions and recurse until the stack blew.
+
 	createEffect(() => {
 		let disposed = false
 		let timer: ReturnType<typeof setTimeout> | undefined
@@ -289,8 +390,8 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 	const [busy, setBusy] = createSignal<string | undefined>()
 
 	const runCommit = async (session: MountedSession) => {
-		const key = session.key
-		if (busy() === key) return
+		const sessionKey = session.key
+		if (busy() === sessionKey) return
 		const prefs = ctx.stores.prefs.value as any
 		const { count, files } = commitState(session)
 		const threshold = Math.max(0, Number(prefs.commitConfirmThreshold) || 0)
@@ -303,7 +404,7 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 					: true
 			if (!ok) return
 		}
-		setBusy(key)
+		setBusy(sessionKey)
 		try {
 			await sendCommit(session, typeof prefs.commitPrompt === 'string' ? prefs.commitPrompt : '')
 		} catch {
@@ -313,7 +414,7 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 				/* ignore */
 			}
 		} finally {
-			if (busy() === key) setBusy(undefined)
+			if (busy() === sessionKey) setBusy(undefined)
 		}
 	}
 
@@ -340,7 +441,6 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 		},
 	}))
 
-	// settings page
 	ctx.add(SettingsPage, {
 		id: 'oh-my-gui',
 		icon: ICON,
@@ -349,13 +449,19 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 		},
 		get entries() {
 			return [
-				{ id: 'context', title: 'Context section', keywords: 'context tokens' },
-				{ id: 'agents', title: 'Agents section', keywords: 'agents' },
+				{
+					id: 'behavior',
+					title: ctx.t('settings.section.behavior'),
+					keywords: 'auto open session',
+				},
+				{ id: 'context', title: 'Context section', keywords: 'context tokens poll' },
+				{ id: 'agents', title: 'Agents section', keywords: 'agents tabs' },
 				{ id: 'hooks', title: 'Hooks section', keywords: 'hooks events' },
-				{ id: 'info', title: 'Info section', keywords: 'info session' },
+				{ id: 'pill', title: ctx.t('settings.pill'), keywords: 'commit pill' },
+				{ id: 'layout', title: ctx.t('settings.section.layout'), keywords: 'width panel' },
 			]
 		},
-		render: (input) => <SettingsView target={input.target} />,
+		render: (input) => <SettingsView target={input.target} ui={ui} />,
 	})
 }
 
@@ -429,8 +535,8 @@ function PanelShell(props: { session: MountedSession }) {
 			style={{
 				padding: '4px 8px',
 				'border-radius': '6px',
-				border: tab() === p.id ? '1px solid rgba(255,255,255,0.18)' : '1px solid transparent',
-				'background-color': tab() === p.id ? 'rgba(255,255,255,0.06)' : 'transparent',
+				border: tab() === p.id ? `1px solid ${tok.border}` : '1px solid transparent',
+				'background-color': tab() === p.id ? tok.surfaceRaised : 'transparent',
 				cursor: 'pointer',
 			}}
 		>
@@ -494,31 +600,11 @@ function PanelShell(props: { session: MountedSession }) {
 	)
 }
 
-function SettingsView(props: { target?: string }) {
+function SettingsView(props: { target?: string; ui: any }) {
 	const ctx = usePlugin<typeof definition>()
+	const ui = props.ui
 	const p = ctx.stores.prefs as any
 	const [configNotice, setConfigNotice] = createSignal('')
-
-	const isTarget = (id: string) =>
-		props.target === id ||
-		(props.target === 'pill' && id === 'pill') ||
-		(props.target === 'hooks' && id === 'hooks')
-
-	const cardStyle = (id: string) => ({
-		display: 'flex',
-		'flex-direction': 'column' as const,
-		gap: '12px',
-		padding: '16px',
-		'border-radius': '8px',
-		border:
-			isTarget(id) && props.target
-				? '1px solid rgba(100, 149, 237, 0.45)'
-				: '1px solid var(--border, rgba(255,255,255,0.1))',
-		'background-color':
-			isTarget(id) && props.target
-				? 'rgba(100, 149, 237, 0.08)'
-				: 'var(--surface, rgba(255,255,255,0.02))',
-	})
 
 	const setPref = (patch: Record<string, unknown>) => p.set({ ...p.value, ...patch })
 
@@ -534,98 +620,116 @@ function SettingsView(props: { target?: string }) {
 		setTimeout(() => setConfigNotice(''), 2000)
 	}
 
-	return (
-		<div
-			style={{
-				display: 'flex',
-				'flex-direction': 'column',
-				gap: '16px',
-				padding: '20px',
-				'max-width': '520px',
-			}}
-		>
-			<div style={{ display: 'flex', 'flex-direction': 'column', gap: '4px' }}>
-				<h2 style={{ margin: 0, 'font-size': '18px', 'font-weight': '600' }}>
-					{ctx.t('settings.title')}
-				</h2>
-				<p style={{ margin: 0, 'font-size': '12px', opacity: 0.7 }}>
-					Configure dashboard visibility, refresh cadence, and retention.
-				</p>
-			</div>
+	const pollOptions = [
+		{ value: '2000', label: '2s' },
+		{ value: '5000', label: '5s' },
+		{ value: '10000', label: '10s' },
+		{ value: '15000', label: '15s' },
+		{ value: '30000', label: '30s' },
+	]
 
+	const warnOptions = [
+		{ value: '0', label: 'Off' },
+		{ value: '70', label: '70%' },
+		{ value: '80', label: '80%' },
+		{ value: '90', label: '90%' },
+	]
+
+	return (
+		<ui.SettingsLayout title={ctx.t('settings.title')} description={ctx.t('settings.description')}>
 			<Show when={configNotice()}>
 				<div role="status" aria-live="polite" style={{ 'font-size': '12px', opacity: 0.75 }}>
 					{configNotice()}
 				</div>
 			</Show>
 
-			<div style={cardStyle('context')}>
-				<div style={{ 'font-size': '13px', 'font-weight': '500' }}>Context & refresh</div>
-				<label style={{ display: 'flex', 'align-items': 'center', gap: '10px', cursor: 'pointer' }}>
-					<input
-						type="checkbox"
-						checked={p.value.showContext !== false}
-						onChange={(e) => setPref({ showContext: (e.target as HTMLInputElement).checked })}
+			<ui.SettingsSection title={ctx.t('settings.section.behavior')}>
+				<ui.SettingsRow
+					id="behavior"
+					title={ctx.t('settings.autoOpen')}
+					description={ctx.t('settings.autoOpen.description')}
+				>
+					<ui.Switch
+						label={ctx.t('settings.autoOpen')}
+						hideLabel
+						checked={p.value.autoOpen !== false}
+						onChange={(v: boolean) => setPref({ autoOpen: v })}
 					/>
-					<span style={{ 'font-size': '13px' }}>Show Context tab</span>
-				</label>
-				<label style={{ display: 'flex', 'align-items': 'center', gap: '10px' }}>
-					<span style={{ 'font-size': '13px', 'min-width': '150px' }}>Poll interval (ms)</span>
-					<input
-						type="number"
-						min="2000"
-						max="30000"
-						step="500"
-						value={Number(p.value.pollMs) || 5000}
-						onInput={(e) =>
+				</ui.SettingsRow>
+				<ui.SettingsRow
+					id="context-warn"
+					title={ctx.t('settings.contextWarnAt')}
+					description={ctx.t('settings.contextWarnAt.description')}
+				>
+					<ui.Select
+						label={ctx.t('settings.contextWarnAt')}
+						options={warnOptions}
+						value={String(Math.max(0, Number(p.value.contextWarnAt) || 0))}
+						onChange={(v: string) => setPref({ contextWarnAt: Number(v) || 0 })}
+					/>
+				</ui.SettingsRow>
+			</ui.SettingsSection>
+
+			<ui.SettingsSection title="Context & refresh">
+				<ui.SettingsRow id="context" title={ctx.t('settings.showContext')}>
+					<ui.Switch
+						label={ctx.t('settings.showContext')}
+						hideLabel
+						checked={p.value.showContext !== false}
+						onChange={(v: boolean) => setPref({ showContext: v })}
+					/>
+				</ui.SettingsRow>
+				<ui.SettingsRow
+					id="poll"
+					title={ctx.t('settings.pollMs')}
+					description={ctx.t('settings.pollMs.description')}
+				>
+					<ui.Select
+						label={ctx.t('settings.pollMs')}
+						options={pollOptions}
+						value={String(Number(p.value.pollMs) || 5000)}
+						onChange={(v: string) =>
 							setPref({
-								pollMs: Math.max(
-									2000,
-									Math.min(30000, Number((e.target as HTMLInputElement).value) || 5000),
-								),
+								pollMs: Math.max(2000, Math.min(30000, Number(v) || 5000)),
 							})
 						}
-						style={{ width: '120px' }}
 					/>
-				</label>
-				<div style={{ 'font-size': '11px', opacity: 0.6 }}>
-					Panel tabs poll at this interval (min 2s). The context pill polls at least 2× slower and
-					pauses while the window is hidden.
-				</div>
-			</div>
+				</ui.SettingsRow>
+			</ui.SettingsSection>
 
-			<div style={cardStyle('agents')}>
-				<div style={{ 'font-size': '13px', 'font-weight': '500' }}>Panel tabs</div>
-				<label style={{ display: 'flex', 'align-items': 'center', gap: '10px', cursor: 'pointer' }}>
-					<input
-						type="checkbox"
+			<ui.SettingsSection title={ctx.t('settings.section.tabs')}>
+				<ui.SettingsRow id="agents" title={ctx.t('settings.showAgents')}>
+					<ui.Switch
+						label={ctx.t('settings.showAgents')}
+						hideLabel
 						checked={p.value.showAgents !== false}
-						onChange={(e) => setPref({ showAgents: (e.target as HTMLInputElement).checked })}
+						onChange={(v: boolean) => setPref({ showAgents: v })}
 					/>
-					<span style={{ 'font-size': '13px' }}>Show Agents tab</span>
-				</label>
-				<label style={{ display: 'flex', 'align-items': 'center', gap: '10px', cursor: 'pointer' }}>
-					<input
-						type="checkbox"
+				</ui.SettingsRow>
+				<ui.SettingsRow id="hooks-tab" title={ctx.t('settings.showHooks')}>
+					<ui.Switch
+						label={ctx.t('settings.showHooks')}
+						hideLabel
 						checked={p.value.showHooks !== false}
-						onChange={(e) => setPref({ showHooks: (e.target as HTMLInputElement).checked })}
+						onChange={(v: boolean) => setPref({ showHooks: v })}
 					/>
-					<span style={{ 'font-size': '13px' }}>Show Hooks tab</span>
-				</label>
-				<label style={{ display: 'flex', 'align-items': 'center', gap: '10px', cursor: 'pointer' }}>
-					<input
-						type="checkbox"
+				</ui.SettingsRow>
+				<ui.SettingsRow id="info" title={ctx.t('settings.showInfo')}>
+					<ui.Switch
+						label={ctx.t('settings.showInfo')}
+						hideLabel
 						checked={p.value.showInfo !== false}
-						onChange={(e) => setPref({ showInfo: (e.target as HTMLInputElement).checked })}
+						onChange={(v: boolean) => setPref({ showInfo: v })}
 					/>
-					<span style={{ 'font-size': '13px' }}>Show Info tab</span>
-				</label>
-			</div>
+				</ui.SettingsRow>
+			</ui.SettingsSection>
 
-			<div style={cardStyle('hooks')}>
-				<div style={{ 'font-size': '13px', 'font-weight': '500' }}>Hook retention & history</div>
-				<label style={{ display: 'flex', 'align-items': 'center', gap: '10px' }}>
-					<span style={{ 'font-size': '13px', 'min-width': '150px' }}>Server max hooks</span>
+			<ui.SettingsSection title={ctx.t('settings.section.hooks')}>
+				<ui.SettingsRow
+					id="hooks"
+					title={ctx.t('settings.maxHooks')}
+					description={ctx.t('settings.maxHooks.description')}
+				>
 					<input
 						type="number"
 						min="20"
@@ -635,9 +739,12 @@ function SettingsView(props: { target?: string }) {
 						onChange={(e) => void applyServerMaxHooks(Number((e.target as HTMLInputElement).value))}
 						style={{ width: '120px' }}
 					/>
-				</label>
-				<label style={{ display: 'flex', 'align-items': 'center', gap: '10px' }}>
-					<span style={{ 'font-size': '13px', 'min-width': '150px' }}>Hooks fetch limit</span>
+				</ui.SettingsRow>
+				<ui.SettingsRow
+					id="hooks-fetch"
+					title={ctx.t('settings.hooksFetchLimit')}
+					description={ctx.t('settings.hooksFetchLimit.description')}
+				>
 					<input
 						type="number"
 						min="10"
@@ -654,32 +761,23 @@ function SettingsView(props: { target?: string }) {
 						}
 						style={{ width: '120px' }}
 					/>
-				</label>
-				<div style={{ 'font-size': '11px', opacity: 0.6 }}>
-					Server max hooks controls in-memory retention (best-effort). Fetch limit controls how many
-					entries the Hooks view requests.
-				</div>
-			</div>
+				</ui.SettingsRow>
+			</ui.SettingsSection>
 
-			<div style={cardStyle('pill')}>
-				<div style={{ 'font-size': '13px', 'font-weight': '500' }}>{ctx.t('settings.pill')}</div>
-				<label style={{ display: 'flex', 'align-items': 'center', gap: '10px', cursor: 'pointer' }}>
-					<input
-						type="checkbox"
+			<ui.SettingsSection title={ctx.t('settings.section.pill')}>
+				<ui.SettingsRow
+					id="pill"
+					title={ctx.t('settings.showCommit')}
+					description={ctx.t('settings.showCommit.description')}
+				>
+					<ui.Switch
+						label={ctx.t('settings.showCommit')}
+						hideLabel
 						checked={p.value.showCommit !== false}
-						onChange={(e) => setPref({ showCommit: (e.target as HTMLInputElement).checked })}
+						onChange={(v: boolean) => setPref({ showCommit: v })}
 					/>
-					<div style={{ display: 'flex', 'flex-direction': 'column', gap: '2px' }}>
-						<span style={{ 'font-size': '13px' }}>{ctx.t('settings.showCommit')}</span>
-						<span style={{ 'font-size': '11px', opacity: 0.6 }}>
-							Show Commit pill when there are uncommitted changes (tooltip lists files)
-						</span>
-					</div>
-				</label>
-				<label style={{ display: 'flex', 'align-items': 'center', gap: '10px' }}>
-					<span style={{ 'font-size': '13px', 'min-width': '150px' }}>
-						{ctx.t('settings.commitConfirm')}
-					</span>
+				</ui.SettingsRow>
+				<ui.SettingsRow id="commit-confirm" title={ctx.t('settings.commitConfirm')}>
 					<input
 						type="number"
 						min="0"
@@ -697,9 +795,8 @@ function SettingsView(props: { target?: string }) {
 						style={{ width: '90px' }}
 						title="0 disables confirmation"
 					/>
-				</label>
-				<label style={{ display: 'flex', 'flex-direction': 'column', gap: '4px' }}>
-					<span style={{ 'font-size': '13px' }}>{ctx.t('settings.commitPrompt')}</span>
+				</ui.SettingsRow>
+				<ui.SettingsRow id="commit-prompt" title={ctx.t('settings.commitPrompt')}>
 					<textarea
 						value={typeof p.value.commitPrompt === 'string' ? p.value.commitPrompt : ''}
 						onInput={(e) => setPref({ commitPrompt: (e.target as HTMLTextAreaElement).value })}
@@ -713,14 +810,24 @@ function SettingsView(props: { target?: string }) {
 							resize: 'vertical',
 						}}
 					/>
-				</label>
-			</div>
+				</ui.SettingsRow>
+			</ui.SettingsSection>
+
+			<ui.SettingsSection title={ctx.t('settings.section.layout')}>
+				<ui.SettingsRow
+					id="layout"
+					title={ctx.t('settings.panelWidth')}
+					description={ctx.t('settings.panelWidth.description')}
+				>
+					<span style={{ 'font-size': '13px', opacity: 0.75 }}>{PANEL_WIDTH}px default</span>
+				</ui.SettingsRow>
+			</ui.SettingsSection>
 
 			<Show when={props.target}>
 				<div style={{ 'font-size': '11px', opacity: 0.55 }}>
 					Settings target: <code>{props.target}</code>
 				</div>
 			</Show>
-		</div>
+		</ui.SettingsLayout>
 	)
 }

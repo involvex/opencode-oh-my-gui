@@ -5,6 +5,7 @@ import type { MountedSession } from '@opencode/plugin/gui'
 import type { definition } from './definition'
 import { DashboardRpc } from '../rpc'
 import { createSessionPoll } from './poll'
+import { tok } from './tokens'
 
 export function InfoView(props: { session: MountedSession }) {
 	const ctx = usePlugin<typeof definition>()
@@ -229,7 +230,7 @@ export function InfoView(props: { session: MountedSession }) {
 				}
 			>
 				<Show when={error()}>
-					<div role="alert" style={{ color: '#f87171' }}>
+					<div role="alert" style={{ color: tok.error }}>
 						Unavailable: {error()}
 						{failures() > 1 ? ` (attempt ${failures()})` : ''} · retrying
 					</div>

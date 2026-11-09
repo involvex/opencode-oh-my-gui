@@ -5,6 +5,7 @@ import type { MountedSession } from '@opencode/plugin/gui'
 import type { definition } from './definition'
 import { DashboardRpc } from '../rpc'
 import { createSessionPoll } from './poll'
+import { tok } from './tokens'
 
 export function AgentsView(props: { session: MountedSession }) {
 	const ctx = usePlugin<typeof definition>()
@@ -126,7 +127,7 @@ export function AgentsView(props: { session: MountedSession }) {
 				}
 			>
 				<Show when={error()}>
-					<div role="alert" style={{ color: '#f87171', 'font-size': '12px' }}>
+					<div role="alert" style={{ color: tok.error, 'font-size': '12px' }}>
 						Unavailable: {error()}
 						{failures() > 1 ? ` (attempt ${failures()})` : ''} · retrying
 					</div>
@@ -143,10 +144,8 @@ export function AgentsView(props: { session: MountedSession }) {
 									gap: '4px',
 									padding: '8px',
 									'border-radius': '8px',
-									border: a.active
-										? '1px solid rgba(34,197,94,0.35)'
-										: '1px solid rgba(255,255,255,0.08)',
-									'background-color': a.active ? 'rgba(34,197,94,0.06)' : 'rgba(255,255,255,0.02)',
+									border: a.active ? `1px solid ${tok.success}` : `1px solid ${tok.border}`,
+									'background-color': tok.surface,
 								}}
 							>
 								<div
@@ -165,8 +164,8 @@ export function AgentsView(props: { session: MountedSession }) {
 													'font-size': '10px',
 													padding: '1px 6px',
 													'border-radius': '999px',
-													'background-color': 'rgba(34,197,94,0.18)',
-													color: '#86efac',
+													'background-color': tok.surfaceRaised,
+													color: tok.success,
 												}}
 											>
 												active

@@ -1,10 +1,12 @@
 # @involvex/oh-my-gui
 
-OpenCode V2 plugin.
+OpenCode V2 desktop GUI plugin: session dashboard (context, agents, hooks, info), composer pills, and Appearance themes.
+
+**Requires OpenCode Desktop / `@opencode/plugin` ≥ 2.2.6.**
 
 ## Installation
 
-Add to your `opencode.json` (global or per-project) using the V2 config format:
+Add to your `opencode.jsonc` (Desktop) or `opencode.json` using the V2 config format:
 
 ```json
 {
@@ -64,6 +66,26 @@ To remove it:
 bun run unregister
 ```
 
+## Desktop GUI features
+
+| Feature         | How                                                                   |
+| --------------- | --------------------------------------------------------------------- |
+| Side panel      | Session panel menu, `Ctrl+\``, or `/omg`                              |
+| Auto-open       | On by default for new session tabs; toggle in Settings → Oh My GUI    |
+| Panel width     | Defaults to 380px; drag the divider (remembered per panel)            |
+| Themes          | **Oh My GUI** and **Oh My GUI Dawn** in Settings → Appearance → Theme |
+| Context warning | Toast once per session when usage crosses the threshold (default 80%) |
+| Commit pill     | Appears when the repo has uncommitted changes                         |
+| Run shell fence | “Run in terminal” on `sh` / `bash` / `powershell` / `cmd` code blocks |
+
+```bash
+# GUI bundle (required for Desktop)
+bun run build:gui
+
+# Watch while developing against Desktop
+bun run dev:gui
+```
+
 ## Development
 
 ```bash
@@ -82,12 +104,13 @@ bun typecheck
 ```
 @involvex/oh-my-gui/
 ├── src/
-│   └── index.ts      # Plugin entry point (V2 Plugin.define pattern)
-├── setup.ts          # Register plugin globally in ~/.config/opencode/opencode.json
-├── unregister.ts     # Remove plugin from global config
-├── dev.ts            # Development script (runs OpenCode with plugin)
-├── package.json
-├── tsconfig.json
+│   ├── index.ts           # Server plugin (hooks + DashboardRpc)
+│   ├── gui.tsx            # Desktop GUI entry
+│   └── gui/               # Panel views, themes, settings
+├── dist/gui-experimental.cjs
+├── setup.ts
+├── unregister.ts
+├── dev.ts
 └── ...
 ```
 

@@ -5,18 +5,7 @@ import type { MountedSession } from '@opencode/plugin/gui'
 import type { definition } from './definition'
 import { DashboardRpc } from '../rpc'
 import { createSessionPoll } from './poll'
-
-/** key on the row, label, accent color */
-const SERIES = [
-	['system', 'System', '#60a5fa'],
-	['toolSchemas', 'Tool schemas', '#a78bfa'],
-	['user', 'User', '#34d399'],
-	['assistant', 'Assistant', '#22d3ee'],
-	['reasoning', 'Reasoning', '#f472b6'],
-	['toolArgs', 'Tool args', '#fbbf24'],
-	['toolOut', 'Tool output', '#fb923c'],
-	['other', 'Other', '#94a3b8'],
-] as const
+import { SERIES, pctTone, tok } from './tokens'
 
 const CARD = {
 	display: 'flex',
@@ -24,14 +13,14 @@ const CARD = {
 	gap: '8px',
 	padding: '10px',
 	'border-radius': '8px',
-	border: '1px solid rgba(255,255,255,0.08)',
-	'background-color': 'rgba(255,255,255,0.02)',
+	border: `1px solid ${tok.border}`,
+	'background-color': tok.surface,
 } as const
 
 const TRACK = {
 	width: '100%',
 	'border-radius': '999px',
-	'background-color': 'rgba(255,255,255,0.07)',
+	'background-color': tok.track,
 	overflow: 'hidden',
 } as const
 
@@ -156,7 +145,7 @@ export function ContextView(props: { session: MountedSession }) {
 				}
 			>
 				<Show when={error()}>
-					<div role="alert" style={{ 'font-size': '12px', color: '#f87171' }}>
+					<div role="alert" style={{ 'font-size': '12px', color: tok.error }}>
 						Server unavailable: {error()}
 						{failures() > 1 ? ` (attempt ${failures()})` : ''} · retrying
 					</div>
@@ -175,8 +164,7 @@ export function ContextView(props: { session: MountedSession }) {
 						const hasTotal = total > 0
 						const pct = hasTotal ? (used / total) * 100 : null
 						const width = pct === null ? 0 : Math.min(100, Math.max(0, pct))
-						const tone =
-							pct === null ? '#64748b' : pct >= 90 ? '#f87171' : pct >= 70 ? '#fbbf24' : '#22c55e'
+						const tone = pctTone(pct)
 						const pctLabel = pct === null ? 'n/a' : `${pct.toFixed(0)}%`
 						return (
 							<>
@@ -311,14 +299,14 @@ export function ContextView(props: { session: MountedSession }) {
 								<Show when={health()}>
 									{(h) => {
 										const risk = String(h().compactionRisk || 'unknown')
-										const riskTone =
+										const tone =
 											risk === 'high'
-												? '#f87171'
+												? tok.error
 												: risk === 'medium'
-													? '#fbbf24'
+													? tok.warning
 													: risk === 'low'
-														? '#22c55e'
-														: '#94a3b8'
+														? tok.success
+														: tok.muted
 										const guidance =
 											risk === 'high'
 												? 'Compaction risk is high. Consider compacting or starting a fresh session, and trim large tool outputs where possible.'
@@ -335,23 +323,13 @@ export function ContextView(props: { session: MountedSession }) {
 														aria-live="polite"
 														style={{
 															...CARD,
-															'border-color':
-																risk === 'high'
-																	? 'rgba(248,113,113,0.35)'
-																	: risk === 'medium'
-																		? 'rgba(251,191,36,0.3)'
-																		: 'rgba(148,163,184,0.2)',
-															'background-color':
-																risk === 'high'
-																	? 'rgba(248,113,113,0.06)'
-																	: risk === 'medium'
-																		? 'rgba(251,191,36,0.05)'
-																		: 'rgba(255,255,255,0.02)',
+															'border-color': tone,
+															'background-color': tok.surface,
 															'font-size': '11px',
 															'line-height': '1.35',
 														}}
 													>
-														<span style={{ 'font-weight': '600', color: riskTone }}>Guidance</span>
+														<span style={{ 'font-weight': '600', color: tone }}>Guidance</span>
 														<span style={{ opacity: 0.85 }}>{guidance}</span>
 													</div>
 												</Show>
@@ -367,7 +345,7 @@ export function ContextView(props: { session: MountedSession }) {
 															Session health
 														</span>
 														<span
-															style={{ 'font-size': '11px', color: riskTone, 'font-weight': '600' }}
+															style={{ 'font-size': '11px', color: tone, 'font-weight': '600' }}
 														>
 															compaction: {risk}
 														</span>
@@ -384,7 +362,7 @@ export function ContextView(props: { session: MountedSession }) {
 															<span style={{ opacity: 0.65 }}>Hooks:</span>{' '}
 															{fmt(h().hookCount || 0)}
 															{h().hookErrors ? (
-																<span style={{ color: '#f87171' }}> · {h().hookErrors} err</span>
+																<span style={{ color: tok.error }}> · {h().hookErrors} err</span>
 															) : null}
 														</div>
 														<div>

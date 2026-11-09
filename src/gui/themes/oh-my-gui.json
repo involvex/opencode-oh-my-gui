@@ -1,0 +1,34 @@
+{
+	"$schema": "https://opencode.ai/desktop-theme.json",
+	"name": "Oh My GUI",
+	"id": "oh-my-gui",
+	"light": {
+		"palette": {
+			"neutral": "#f4f6f8",
+			"ink": "#1a2332",
+			"primary": "#3b6ea5",
+			"success": "#2f8f6b",
+			"warning": "#c47d1a",
+			"error": "#c44b4b",
+			"info": "#4a7a9b",
+			"accent": "#5b7c99",
+			"interactive": "#3b6ea5"
+		}
+	},
+	"dark": {
+		"palette": {
+			"neutral": "#12171f",
+			"ink": "#e8edf4",
+			"primary": "#6ea8d9",
+			"success": "#4ade80",
+			"warning": "#fbbf24",
+			"error": "#f87171",
+			"info": "#67b3d9",
+			"accent": "#88a4bc",
+			"interactive": "#6ea8d9"
+		},
+		"overrides": {
+			"syntax-keyword": "#6ea8d9"
+		}
+	}
+}

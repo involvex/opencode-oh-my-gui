@@ -11,7 +11,8 @@
 		"noEmit": true,
 		"jsx": "preserve",
 		"jsxImportSource": "solid-js",
-		"allowJs": true
+		"allowJs": true,
+		"resolveJsonModule": true
 	},
 	"include": ["src/**/*", "dev.ts", "src/gui/**/*"],
 	"exclude": ["node_modules"]
