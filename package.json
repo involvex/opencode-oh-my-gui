@@ -1,6 +1,6 @@
 {
 	"name": "@involvex/oh-my-gui",
-	"version": "0.5.0",
+	"version": "0.5.1",
 	"description": "OpenCode Desktop GUI: live context usage, background jobs, session dashboard, themes, shell Run",
 	"keywords": [
 		"opencode",
