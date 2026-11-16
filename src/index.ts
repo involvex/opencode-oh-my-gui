@@ -607,6 +607,29 @@ export default Plugin.define({
 			}
 		})()
 
+		// --- fork hook: log when a session is forked ---
+		try {
+			const reg = await ctx.session.hook('fork', (f: any) => {
+				try {
+					const sid = String(f?.sessionID ?? '')
+					pushHook({
+						ts: now(),
+						type: 'fork',
+						tool: '',
+						status: 'info',
+						summary: 'fork',
+						detail: sid ? `session ${sid.slice(0, 8)}` : '',
+						sessionID: sid,
+					})
+				} catch (err) {
+					logErr('fork hook handler failed', err)
+				}
+			})
+			registrations.push(reg)
+		} catch (err) {
+			logErr('fork hook registration failed', err)
+		}
+
 		// --- prompt hook: track directory not available; just log ---
 		try {
 			const reg = await ctx.session.hook('prompt', (p: any) => {

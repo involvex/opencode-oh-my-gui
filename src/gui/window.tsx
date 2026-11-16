@@ -13,7 +13,7 @@ import {
 	type Command as CommandType,
 	type MenuItem as MenuItemType,
 } from '@opencode/plugin/gui'
-import { Show, createEffect, createSignal, onCleanup, untrack } from 'solid-js'
+import { Show, createEffect, createSignal } from 'solid-js'
 import type { Plugin } from '@opencode/plugin/gui'
 import type { definition } from './definition'
 import { DashboardRpc } from '../rpc'
@@ -21,8 +21,10 @@ import { ContextView } from './context'
 import { AgentsView } from './agents'
 import { HooksView } from './hooks'
 import { InfoView } from './info'
+import { JobsView } from './jobs'
 import { sendCommit, useCommitChanges } from './commit'
 import { normalizeShellCode, runInTerminal } from './run-shell'
+import { formatTokens, readSessionUsage } from './usage'
 import ohMyGuiTheme from './themes/oh-my-gui.json'
 import ohMyGuiDawnTheme from './themes/oh-my-gui-dawn.json'
 import { tok } from './tokens'
@@ -33,7 +35,7 @@ const ICON = 'window-analytics'
 const TITLE = 'Oh My GUI'
 
 const TAB: PanelTab = { id: PANEL_ID, title: TITLE, closable: 'compact', fallback: true }
-type DashTab = 'context' | 'agents' | 'hooks' | 'info'
+type DashTab = 'context' | 'agents' | 'hooks' | 'info' | 'jobs'
 const [requestedTab, setRequestedTab] = createSignal<DashTab | null>(null)
 
 const FOCUS_STYLE_ID = 'oh-my-gui-focus-style'
@@ -155,7 +157,7 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 		id: PANEL_ID,
 		title: TITLE,
 		icon: ICON,
-		description: 'Agents, context, hooks & info',
+		description: 'Agents, context, hooks, jobs & info',
 		opened: !!ctx.sessions.current() && ctx.layout.state(key, ctx.sessions.current()!) !== 'closed',
 		run: () => open(),
 	}))
@@ -173,9 +175,14 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 	}))
 
 	const tabCommands: Array<{ id: DashTab; title: string; keywords: string }> = [
-		{ id: 'context', title: 'Open Oh My GUI: Context', keywords: 'tokens usage health breakdown' },
+		{
+			id: 'context',
+			title: 'Open Oh My GUI: Context',
+			keywords: 'tokens usage health breakdown cost',
+		},
 		{ id: 'agents', title: 'Open Oh My GUI: Agents', keywords: 'agents models tools' },
 		{ id: 'hooks', title: 'Open Oh My GUI: Hooks', keywords: 'hooks events tools log errors' },
+		{ id: 'jobs', title: 'Open Oh My GUI: Jobs', keywords: 'background jobs shell subagent' },
 		{ id: 'info', title: 'Open Oh My GUI: Info', keywords: 'session info git mcp todos' },
 	]
 	for (const cmd of tabCommands) {
@@ -240,31 +247,7 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 		},
 	}))
 
-	const [pill, setPill] = createSignal<
-		| {
-				sessionID: string
-				label: string
-				tone?: 'warning' | 'danger'
-				title: string
-		  }
-		| undefined
-	>(undefined)
 	const contextWarned = new Set<string>()
-
-	const withTimeout = async <T,>(promise: Promise<T>, ms: number): Promise<T> => {
-		let timer: ReturnType<typeof setTimeout> | undefined
-		try {
-			return await Promise.race([
-				promise,
-				new Promise<T>((_, reject) => {
-					timer = setTimeout(() => reject(new Error(`Request timed out after ${ms}ms`)), ms)
-				}),
-			])
-		} finally {
-			if (timer) clearTimeout(timer)
-		}
-	}
-
 	const maybeWarnContext = (sessionID: string, share: number) => {
 		const warnAt = Math.max(
 			0,
@@ -287,102 +270,36 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 		}
 	}
 
-	const refreshPill = async () => {
-		const session = ctx.sessions.current()
-		if (!session) {
-			setPill(undefined)
-			return true
-		}
-		try {
-			const result = (await withTimeout(
-				ctx.client.rpc(DashboardRpc).context({ sessionID: session.id }),
-				8000,
-			)) as any
-			const row = result?.rows?.[0]
-			if (!row) {
-				setPill(undefined)
-				return true
-			}
-			if (row.usable && row.usable > 0) {
-				const share = (row.ctx / row.usable) * 100
-				const risk = share >= 90 ? 'high' : share >= 70 ? 'medium' : 'low'
-				maybeWarnContext(session.id, share)
-				setPill({
-					sessionID: session.id,
-					label: `${share.toFixed(0)}% ctx`,
-					tone: share >= 90 ? 'danger' : share >= 70 ? 'warning' : undefined,
-					title:
-						risk === 'high'
-							? `Context ${share.toFixed(0)}% used — compaction risk high (may be stale if updates fail)`
-							: risk === 'medium'
-								? `Context ${share.toFixed(0)}% used — compaction risk rising`
-								: `Context ${share.toFixed(0)}% used`,
-				})
-				return true
-			}
-			if (row.ctx && row.ctx > 0) {
-				setPill({
-					sessionID: session.id,
-					label: `${row.ctx >= 1000 ? (row.ctx / 1000).toFixed(1) + 'k' : row.ctx} ctx`,
-					tone: undefined,
-					title: `Context estimate: ${row.ctx.toLocaleString()} tokens (model limit unknown)`,
-				})
-				return true
-			}
-			setPill(undefined)
-			return true
-		} catch {
-			const current = pill()
-			if (current && current.sessionID !== session.id) setPill(undefined)
-			return false
-		}
-	}
-
-	createEffect(() => {
-		let disposed = false
-		let timer: ReturnType<typeof setTimeout> | undefined
-		let failures = 0
-		const schedule = (ok: boolean) => {
-			if (disposed) return
-			if (timer !== undefined) clearTimeout(timer)
-			const pref = untrack(() =>
-				Math.max(1000, Number((ctx.stores.prefs.value as any).pollMs) || 5000),
-			)
-			const base = Math.max(5000, pref * 2)
-			const backoff = ok ? 0 : Math.min(60000, base * Math.pow(2, Math.min(failures, 4)))
-			timer = setTimeout(() => void tick(), ok ? base : Math.max(base, backoff))
-		}
-		const tick = async () => {
-			if (disposed) return
-			if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
-				schedule(true)
-				return
-			}
-			const ok = await refreshPill()
-			if (disposed) return
-			if (ok) failures = 0
-			else failures += 1
-			schedule(ok)
-		}
-		timer = setTimeout(() => void tick(), 0)
-		onCleanup(() => {
-			disposed = true
-			if (timer !== undefined) clearTimeout(timer)
-		})
-	})
-
 	ctx.add(ComposerPill, () => ({
 		id: 'context',
 		show: ({ session }) => {
-			const current = pill()
-			if (!current || current.sessionID !== session.id) return undefined
-			return {
-				label: current.label,
-				icon: ICON,
-				tone: current.tone,
-				title: current.title,
-				run: () => open(session as any),
+			const usage = readSessionUsage(session as MountedSession)
+			if (!usage) return undefined
+			if (usage.share != null) maybeWarnContext(session.id, usage.share)
+			if (usage.usable > 0 && usage.share != null) {
+				const share = usage.share
+				return {
+					label: `${share.toFixed(0)}% ctx`,
+					icon: ICON,
+					tone: share >= 90 ? ('danger' as const) : share >= 70 ? ('warning' as const) : undefined,
+					title:
+						usage.risk === 'high'
+							? `Context ${share.toFixed(0)}% used — compaction risk high`
+							: usage.risk === 'medium'
+								? `Context ${share.toFixed(0)}% used — compaction risk rising`
+								: `Context ${share.toFixed(0)}% used${usage.cost > 0 ? ` · $${usage.cost.toFixed(2)}` : ''}`,
+					run: () => open(session as any, 'context'),
+				}
 			}
+			if (usage.tokens > 0) {
+				return {
+					label: `${formatTokens(usage.tokens)} ctx`,
+					icon: ICON,
+					title: `Context: ${usage.tokens.toLocaleString()} tokens (model limit unknown)`,
+					run: () => open(session as any, 'context'),
+				}
+			}
+			return undefined
 		},
 	}))
 
@@ -398,10 +315,10 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 		if (threshold > 0 && count >= threshold) {
 			const preview = files.slice(0, 8).join('\n')
 			const more = files.length > 8 ? `\n… and ${files.length - 8} more` : ''
-			const ok =
-				typeof globalThis.confirm === 'function'
-					? globalThis.confirm(`Send /commit for ${count} changed file(s)?\n\n${preview}${more}`)
-					: true
+			const ok = await ctx.dialogs.confirm({
+				title: ctx.t('pill.commit.confirm', { count: String(count) }),
+				description: `${preview}${more}`,
+			})
 			if (!ok) return
 		}
 		setBusy(sessionKey)
@@ -441,6 +358,50 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 		},
 	}))
 
+	ctx.add(ComposerPill, () => ({
+		id: 'jobs',
+		order: 2,
+		show: ({ session }) => {
+			const prefs = ctx.stores.prefs.value as any
+			if (prefs.showJobs === false) return undefined
+			const count = (session as MountedSession).background?.length ?? 0
+			if (count <= 0) return undefined
+			return {
+				label: `${count} ${ctx.t('pill.jobs')}`,
+				icon: 'task',
+				tone: 'warning' as const,
+				title: ctx.t('pill.jobs.title'),
+				run: () => open(session as any, 'jobs'),
+			}
+		},
+	}))
+
+	const seenJobs = new Map<string, Map<string, string>>()
+	createEffect(() => {
+		const session = ctx.sessions.current()
+		const notify = (ctx.stores.prefs.value as any).notifyJobs !== false
+		if (!session || !notify) return
+		const key = session.key
+		const current = new Map(
+			(session.background ?? []).map((t) => [t.id, t.label || t.agent || t.type] as const),
+		)
+		const prev = seenJobs.get(key)
+		if (!prev) {
+			seenJobs.set(key, current)
+			return
+		}
+		for (const [id, label] of prev) {
+			if (current.has(id)) continue
+			void ctx.attention.notify({
+				title: ctx.t('toast.jobs.done'),
+				message: ctx.t('toast.jobs.done.message', { label }),
+				session: { server: session.server.id, id: session.id },
+				id: `${ctx.id}:job:${id}`,
+			})
+		}
+		seenJobs.set(key, current)
+	})
+
 	ctx.add(SettingsPage, {
 		id: 'oh-my-gui',
 		icon: ICON,
@@ -457,7 +418,8 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 				{ id: 'context', title: 'Context section', keywords: 'context tokens poll' },
 				{ id: 'agents', title: 'Agents section', keywords: 'agents tabs' },
 				{ id: 'hooks', title: 'Hooks section', keywords: 'hooks events' },
-				{ id: 'pill', title: ctx.t('settings.pill'), keywords: 'commit pill' },
+				{ id: 'jobs', title: 'Jobs section', keywords: 'jobs background notify' },
+				{ id: 'pill', title: ctx.t('settings.pill'), keywords: 'commit pill jobs' },
 				{ id: 'layout', title: ctx.t('settings.section.layout'), keywords: 'width panel' },
 			]
 		},
@@ -475,6 +437,7 @@ function PanelShell(props: { session: MountedSession }) {
 		if (id === 'context') return p.showContext !== false
 		if (id === 'agents') return p.showAgents !== false
 		if (id === 'hooks') return p.showHooks !== false
+		if (id === 'jobs') return p.showJobs !== false
 		return p.showInfo !== false
 	}
 
@@ -487,12 +450,12 @@ function PanelShell(props: { session: MountedSession }) {
 
 	createEffect(() => {
 		if (!visible(tab())) {
-			const first = (['context', 'agents', 'hooks', 'info'] as DashTab[]).find(visible)
+			const first = (['context', 'agents', 'hooks', 'jobs', 'info'] as DashTab[]).find(visible)
 			if (first) setTab(first)
 		}
 	})
 
-	const tabIds = () => (['context', 'agents', 'hooks', 'info'] as DashTab[]).filter(visible)
+	const tabIds = () => (['context', 'agents', 'hooks', 'jobs', 'info'] as DashTab[]).filter(visible)
 	const onTabKeyDown = (e: KeyboardEvent) => {
 		const ids = tabIds()
 		if (ids.length === 0) return
@@ -570,6 +533,9 @@ function PanelShell(props: { session: MountedSession }) {
 				<Show when={visible('hooks')}>
 					<TabButton id="hooks" label={ctx.t('tab.hooks')} />
 				</Show>
+				<Show when={visible('jobs')}>
+					<TabButton id="jobs" label={ctx.t('tab.jobs')} />
+				</Show>
 				<Show when={visible('info')}>
 					<TabButton id="info" label={ctx.t('tab.info')} />
 				</Show>
@@ -588,6 +554,11 @@ function PanelShell(props: { session: MountedSession }) {
 				<Show when={tab() === 'hooks' && visible('hooks')}>
 					<div id="oh-my-gui-panel-hooks" role="tabpanel">
 						<HooksView session={props.session} />
+					</div>
+				</Show>
+				<Show when={tab() === 'jobs' && visible('jobs')}>
+					<div id="oh-my-gui-panel-jobs" role="tabpanel">
+						<JobsView session={props.session} />
 					</div>
 				</Show>
 				<Show when={tab() === 'info' && visible('info')}>
@@ -714,6 +685,14 @@ function SettingsView(props: { target?: string; ui: any }) {
 						onChange={(v: boolean) => setPref({ showHooks: v })}
 					/>
 				</ui.SettingsRow>
+				<ui.SettingsRow id="jobs" title={ctx.t('settings.showJobs')}>
+					<ui.Switch
+						label={ctx.t('settings.showJobs')}
+						hideLabel
+						checked={p.value.showJobs !== false}
+						onChange={(v: boolean) => setPref({ showJobs: v })}
+					/>
+				</ui.SettingsRow>
 				<ui.SettingsRow id="info" title={ctx.t('settings.showInfo')}>
 					<ui.Switch
 						label={ctx.t('settings.showInfo')}
@@ -775,6 +754,18 @@ function SettingsView(props: { target?: string; ui: any }) {
 						hideLabel
 						checked={p.value.showCommit !== false}
 						onChange={(v: boolean) => setPref({ showCommit: v })}
+					/>
+				</ui.SettingsRow>
+				<ui.SettingsRow
+					id="notify-jobs"
+					title={ctx.t('settings.notifyJobs')}
+					description={ctx.t('settings.notifyJobs.description')}
+				>
+					<ui.Switch
+						label={ctx.t('settings.notifyJobs')}
+						hideLabel
+						checked={p.value.notifyJobs !== false}
+						onChange={(v: boolean) => setPref({ notifyJobs: v })}
 					/>
 				</ui.SettingsRow>
 				<ui.SettingsRow id="commit-confirm" title={ctx.t('settings.commitConfirm')}>

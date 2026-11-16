@@ -1,8 +1,8 @@
 # @involvex/oh-my-gui
 
-OpenCode V2 desktop GUI plugin: session dashboard (context, agents, hooks, info), composer pills, and Appearance themes.
+OpenCode V2 desktop GUI plugin: session dashboard (context, agents, hooks, jobs, info), live usage from the session store, composer pills, and Appearance themes.
 
-**Requires OpenCode Desktop / `@opencode/plugin` ≥ 2.2.6.**
+**Requires OpenCode Desktop / `@opencode/plugin` ≥ 2.3.0.**
 
 ## Installation
 
@@ -74,8 +74,11 @@ bun run unregister
 | Auto-open       | On by default for new session tabs; toggle in Settings → Oh My GUI    |
 | Panel width     | Defaults to 380px; drag the divider (remembered per panel)            |
 | Themes          | **Oh My GUI** and **Oh My GUI Dawn** in Settings → Appearance → Theme |
+| Live context    | Composer pill and Context tab read official tokens, cost, and window  |
 | Context warning | Toast once per session when usage crosses the threshold (default 80%) |
+| Jobs            | Jobs tab + pill for background shells/subagents; optional notify      |
 | Commit pill     | Appears when the repo has uncommitted changes                         |
+| Hook quote      | Attach a hook detail as a composer quote                              |
 | Run shell fence | “Run in terminal” on `sh` / `bash` / `powershell` / `cmd` code blocks |
 
 ```bash
@@ -237,6 +240,12 @@ If you're migrating from V1:
 ## Commit pill
 
 A "Commit N" pill appears next to the context pill in the composer when there are uncommitted changes in the session's repository. Clicking it sends `/commit` to the current session (queued). The pill reads changes from the review view and hides automatically once the repository is clean.
+
+## Context and jobs (0.5)
+
+The context pill and Context tab header use OpenCode Desktop's session store (`lastAssistantWithUsage`, model limits, `session.cost`) — the same source as the app header. The breakdown chart remains a local estimate from the server plugin.
+
+The Jobs tab lists live `session.background` tasks and, when available, `experimental.job.list` history (including descendant subagents). Click **Open** on a subagent row to focus that session. Optional desktop notifications fire when a watched background job leaves the running list.
 
 ## Resources
 

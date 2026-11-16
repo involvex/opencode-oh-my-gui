@@ -6,6 +6,7 @@ import type { definition } from './definition'
 import { DashboardRpc } from '../rpc'
 import { createSessionPoll } from './poll'
 import { SERIES, pctTone, tok } from './tokens'
+import { formatCost, formatTokens, readSessionUsage } from './usage'
 
 const CARD = {
 	display: 'flex',
@@ -62,7 +63,6 @@ export function ContextView(props: { session: MountedSession }) {
 			)) as { rows?: unknown }
 			if (disposed()) return 'skipped'
 			setRows(Array.isArray(result.rows) ? result.rows : [])
-			// Health is optional and was doubling RPC load during thrash.
 			const h = (await ctx.client
 				.rpc(DashboardRpc)
 				.health({ sessionID })
@@ -79,8 +79,6 @@ export function ContextView(props: { session: MountedSession }) {
 			setError(err instanceof Error ? err.message : String(err))
 			return 'error'
 		} finally {
-			// Always clear the lock — if we skip this when disposed, the next
-			// effect mount sees refreshing=true and every poll returns 'skipped'.
 			setRefreshing(false)
 			if (!disposed()) setLoaded(true)
 		}
@@ -100,13 +98,43 @@ export function ContextView(props: { session: MountedSession }) {
 		tick: (sessionID, disposed) => refreshNow(sessionID, disposed),
 	})
 
-	const root = () => rows()[0]
-	const fmt = (n: number) =>
-		n >= 1_000_000
-			? `${(n / 1_000_000).toFixed(2)}M`
-			: n >= 1000
-				? `${(n / 1000).toFixed(1)}k`
-				: String(Math.round(n))
+	const usage = () => readSessionUsage(props.session)
+	const estimate = () => rows()[0]
+	const fmt = formatTokens
+
+	const header = () => {
+		const u = usage()
+		if (u) {
+			return {
+				modelID: u.modelID || estimate()?.modelID || 'unknown model',
+				agent: u.agent || estimate()?.agent || 'agent',
+				source: u.source,
+				used: u.tokens,
+				usable: u.usable,
+				reserve: u.reserve,
+				pct: u.share,
+				cost: u.cost,
+				risk: u.risk,
+			}
+		}
+		const row = estimate()
+		if (!row) return null
+		const used = row.ctx || 0
+		const usable = row.usable || 0
+		const pct = usable > 0 ? (used / usable) * 100 : null
+		const risk = pct == null ? 'unknown' : pct >= 90 ? 'high' : pct >= 70 ? 'medium' : 'low'
+		return {
+			modelID: row.modelID || 'unknown model',
+			agent: row.agent || 'agent',
+			source: row.source || 'estimate',
+			used,
+			usable,
+			reserve: row.reserve || 0,
+			pct,
+			cost: 0,
+			risk,
+		}
+	}
 
 	return (
 		<div style={{ display: 'flex', 'flex-direction': 'column', gap: '10px' }}>
@@ -120,11 +148,13 @@ export function ContextView(props: { session: MountedSession }) {
 				}}
 			>
 				<div style={{ 'font-size': '11px', opacity: 0.6 }}>
-					{lastOk()
-						? `Updated ${new Date(lastOk()).toLocaleTimeString()}${failures() > 0 ? ' · retrying with backoff' : ''}`
-						: loaded()
-							? 'No successful update yet'
-							: 'Loading…'}
+					{usage()
+						? 'Live usage from session store'
+						: lastOk()
+							? `Estimate updated ${new Date(lastOk()).toLocaleTimeString()}${failures() > 0 ? ' · retrying with backoff' : ''}`
+							: loaded()
+								? 'No successful estimate yet'
+								: 'Loading…'}
 				</div>
 				<button
 					type="button"
@@ -133,116 +163,120 @@ export function ContextView(props: { session: MountedSession }) {
 					onClick={() => void refreshNow(props.session.id, () => false)}
 					style={{ 'font-size': '11px', padding: '2px 8px' }}
 				>
-					{refreshing() ? 'Refreshing…' : 'Refresh'}
+					{refreshing() ? 'Refreshing…' : 'Refresh estimate'}
 				</button>
 			</div>
+
+			<Show when={header()}>
+				{(h) => {
+					const used = () => h().used
+					const total = () => h().usable
+					const hasTotal = () => total() > 0
+					const pct = () => h().pct
+					const width = () => {
+						const p = pct()
+						return p === null ? 0 : Math.min(100, Math.max(0, p))
+					}
+					const tone = () => pctTone(pct())
+					const pctLabel = () => {
+						const p = pct()
+						return p === null ? 'n/a' : `${p.toFixed(0)}%`
+					}
+					return (
+						<div style={CARD}>
+							<div
+								style={{
+									display: 'flex',
+									'justify-content': 'space-between',
+									'align-items': 'center',
+									gap: '8px',
+								}}
+							>
+								<div style={{ display: 'flex', 'flex-direction': 'column', gap: '1px' }}>
+									<span style={{ 'font-weight': '600', 'font-size': '12px' }}>{h().modelID}</span>
+									<span style={{ 'font-size': '11px', opacity: 0.55 }}>
+										{h().agent} · {h().source}
+										{h().cost > 0 ? ` · ${formatCost(h().cost)}` : ''}
+									</span>
+								</div>
+								<div style={{ display: 'flex', 'flex-direction': 'column', gap: '1px' }}>
+									<span style={{ 'font-size': '14px', 'font-weight': '700', color: tone() }}>
+										{pctLabel()}
+									</span>
+									<span style={{ 'font-size': '11px', opacity: 0.55 }}>used</span>
+								</div>
+							</div>
+							<div style={{ ...TRACK, height: '8px' }}>
+								<div
+									style={{
+										width: `${width()}%`,
+										height: '100%',
+										'background-color': tone(),
+										transition: 'width 0.3s ease',
+									}}
+								/>
+							</div>
+							<div
+								style={{
+									display: 'flex',
+									'justify-content': 'space-between',
+									'font-size': '11px',
+									opacity: 0.7,
+								}}
+							>
+								<span>
+									{fmt(used())}
+									{hasTotal() ? ` / ${fmt(total())}` : ' tokens · limit unknown'}
+								</span>
+								<span>
+									{hasTotal() ? `reserve ${fmt(h().reserve || 0)}` : ''}
+									{h().risk !== 'unknown' ? ` · ${h().risk}` : ''}
+								</span>
+							</div>
+						</div>
+					)
+				}}
+			</Show>
+
 			<Show
 				when={loaded()}
 				fallback={
-					<div role="status" aria-live="polite" style={{ opacity: 0.7, 'font-size': '12px' }}>
-						Loading context...
-					</div>
+					<Show when={!usage()}>
+						<div role="status" aria-live="polite" style={{ opacity: 0.7, 'font-size': '12px' }}>
+							Loading estimate...
+						</div>
+					</Show>
 				}
 			>
 				<Show when={error()}>
 					<div role="alert" style={{ 'font-size': '12px', color: tok.error }}>
-						Server unavailable: {error()}
+						Estimate unavailable: {error()}
 						{failures() > 1 ? ` (attempt ${failures()})` : ''} · retrying
 					</div>
 				</Show>
-				<Show
-					when={root()}
-					fallback={
-						<Show when={!error()}>
-							<div style={{ opacity: 0.7, 'font-size': '12px' }}>No measurement yet.</div>
-						</Show>
-					}
-				>
+				<Show when={estimate()}>
 					{(row) => {
-						const used = row().ctx || 0
-						const total = row().usable || 0
-						const hasTotal = total > 0
-						const pct = hasTotal ? (used / total) * 100 : null
-						const width = pct === null ? 0 : Math.min(100, Math.max(0, pct))
-						const tone = pctTone(pct)
-						const pctLabel = pct === null ? 'n/a' : `${pct.toFixed(0)}%`
+						const used = () => row().ctx || 0
 						return (
 							<>
-								{/* --- usage card --- */}
 								<div style={CARD}>
 									<div
 										style={{
 											display: 'flex',
 											'justify-content': 'space-between',
 											'align-items': 'center',
-											gap: '8px',
 										}}
 									>
-										<div style={{ display: 'flex', 'flex-direction': 'column', gap: '1px' }}>
-											<span style={{ 'font-weight': '600', 'font-size': '12px' }}>
-												{row().modelID || 'unknown model'}
-											</span>
-											<span style={{ 'font-size': '11px', opacity: 0.55 }}>
-												{row().agent || 'agent'} · {row().source}
-											</span>
-										</div>
-										<div style={{ display: 'flex', 'flex-direction': 'column', gap: '1px' }}>
-											<span
-												style={{
-													'font-size': '14px',
-													'font-weight': '700',
-													color: tone,
-												}}
-											>
-												{pctLabel}
-											</span>
-											<span style={{ 'font-size': '11px', opacity: 0.55 }}>used</span>
-										</div>
-									</div>
-									<div style={{ ...TRACK, height: '8px' }}>
-										<div
-											style={{
-												width: `${width}%`,
-												height: '100%',
-												'background-color': tone,
-												transition: 'width 0.3s ease',
-											}}
-										/>
-									</div>
-									<div
-										style={{
-											display: 'flex',
-											'justify-content': 'space-between',
-											'font-size': '11px',
-											opacity: 0.7,
-										}}
-									>
-										<span>
-											{fmt(used)}
-											{hasTotal ? ` / ${fmt(total)}` : ' tokens · limit unknown'}
+										<span style={{ 'font-size': '12px', 'font-weight': '500' }}>
+											Breakdown (estimate)
 										</span>
-										<span>{hasTotal ? `reserve ${fmt(row().reserve || 0)}` : ''}</span>
+										<span style={{ 'font-size': '11px', opacity: 0.55 }}>{fmt(used())} total</span>
 									</div>
-								</div>
-
-								{/* --- breakdown card --- */}
-								<div style={CARD}>
-									<div
-										style={{
-											display: 'flex',
-											'justify-content': 'space-between',
-											'align-items': 'center',
-										}}
-									>
-										<span style={{ 'font-size': '12px', 'font-weight': '500' }}>Breakdown</span>
-										<span style={{ 'font-size': '11px', opacity: 0.55 }}>{fmt(used)} total</span>
-									</div>
-									{/* composition bar */}
 									<div style={{ ...TRACK, display: 'flex', height: '6px' }}>
 										<For each={SERIES}>
 											{(cat) => {
 												const val = row()[cat[0]] || 0
-												const share = used > 0 ? Math.max(0, (val / used) * 100) : 0
+												const share = used() > 0 ? Math.max(0, (val / used()) * 100) : 0
 												if (share <= 0) return null
 												return (
 													<div
@@ -260,7 +294,7 @@ export function ContextView(props: { session: MountedSession }) {
 									<For each={SERIES}>
 										{(cat) => {
 											const val = row()[cat[0]] || 0
-											const share = used > 0 ? Math.max(0, (val / used) * 100) : 0
+											const share = used() > 0 ? Math.max(0, (val / used()) * 100) : 0
 											const dim = val === 0
 											return (
 												<div
@@ -296,9 +330,51 @@ export function ContextView(props: { session: MountedSession }) {
 									</For>
 								</div>
 
+								<Show when={usage()}>
+									{(u) => (
+										<div style={CARD}>
+											<div
+												style={{
+													display: 'flex',
+													'justify-content': 'space-between',
+													'align-items': 'center',
+												}}
+											>
+												<span style={{ 'font-size': '12px', 'font-weight': '500' }}>
+													Provider tokens
+												</span>
+												<span style={{ 'font-size': '11px', opacity: 0.55 }}>
+													{formatCost(u().cost)}
+												</span>
+											</div>
+											<div
+												style={{
+													display: 'grid',
+													'grid-template-columns': '1fr 1fr',
+													gap: '4px 10px',
+													'font-size': '11px',
+												}}
+											>
+												<div>
+													<span style={{ opacity: 0.65 }}>Input:</span> {fmt(u().input)}
+												</div>
+												<div>
+													<span style={{ opacity: 0.65 }}>Output:</span> {fmt(u().output)}
+												</div>
+												<div>
+													<span style={{ opacity: 0.65 }}>Reasoning:</span> {fmt(u().reasoning)}
+												</div>
+												<div>
+													<span style={{ opacity: 0.65 }}>Cache read:</span> {fmt(u().cacheRead)}
+												</div>
+											</div>
+										</div>
+									)}
+								</Show>
+
 								<Show when={health()}>
 									{(h) => {
-										const risk = String(h().compactionRisk || 'unknown')
+										const risk = String(h().compactionRisk || header()?.risk || 'unknown')
 										const tone =
 											risk === 'high'
 												? tok.error
@@ -307,6 +383,7 @@ export function ContextView(props: { session: MountedSession }) {
 													: risk === 'low'
 														? tok.success
 														: tok.muted
+										const hasTotal = (header()?.usable || 0) > 0
 										const guidance =
 											risk === 'high'
 												? 'Compaction risk is high. Consider compacting or starting a fresh session, and trim large tool outputs where possible.'
@@ -380,7 +457,6 @@ export function ContextView(props: { session: MountedSession }) {
 														<div style={{ 'grid-column': '1 / -1', opacity: 0.65 }}>
 															Last hook:{' '}
 															{h().lastHookAt ? new Date(h().lastHookAt).toLocaleTimeString() : '—'}
-															{' · '}estimates only (no cost data)
 														</div>
 													</div>
 												</div>
@@ -390,6 +466,7 @@ export function ContextView(props: { session: MountedSession }) {
 								</Show>
 
 								<div style={{ 'font-size': '10px', opacity: 0.45 }}>
+									{usage() ? 'usage + ' : ''}
 									estimate · updated {new Date(row().updatedAt).toLocaleTimeString()}
 								</div>
 							</>

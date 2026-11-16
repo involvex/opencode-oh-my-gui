@@ -228,6 +228,24 @@ export function HooksView(props: { session: MountedSession }) {
 					<For each={filtered()}>
 						{(e) => {
 							const isErr = matchesPreset(e, 'errors')
+							const quoteDetail = () => {
+								const text = String(e.detail ?? '').trim()
+								if (!text) return
+								const composer = ctx.screen.current()?.composer
+								if (!composer?.quotable()) return
+								const commentID = crypto.randomUUID()
+								composer.attach({
+									type: 'quote',
+									commentID,
+									text,
+									source: {
+										label: ctx.t('hooks.quote.source'),
+										icon: 'console',
+										subject: 'the Oh My GUI hooks log',
+									},
+								})
+								composer.focus(commentID)
+							}
 							return (
 								<div
 									style={{
@@ -239,13 +257,32 @@ export function HooksView(props: { session: MountedSession }) {
 										'background-color': isErr ? tok.surface : 'transparent',
 									}}
 								>
-									<div>
-										<span style={{ opacity: 0.6 }}>{String(e.ts ?? '').slice(11, 19)} </span>
-										<span style={{ 'font-weight': '600' }}>{e.type}</span>
-										{e.tool ? <span> · {e.tool}</span> : null}
-										{e.status ? (
-											<span style={{ color: isErr ? tok.error : 'inherit' }}> [{e.status}]</span>
-										) : null}
+									<div
+										style={{
+											display: 'flex',
+											'justify-content': 'space-between',
+											gap: '8px',
+											'align-items': 'center',
+										}}
+									>
+										<div>
+											<span style={{ opacity: 0.6 }}>{String(e.ts ?? '').slice(11, 19)} </span>
+											<span style={{ 'font-weight': '600' }}>{e.type}</span>
+											{e.tool ? <span> · {e.tool}</span> : null}
+											{e.status ? (
+												<span style={{ color: isErr ? tok.error : 'inherit' }}> [{e.status}]</span>
+											) : null}
+										</div>
+										<Show when={e.detail && ctx.screen.current()?.composer?.quotable()}>
+											<button
+												type="button"
+												class="oh-my-gui-btn"
+												style={{ 'font-size': '10px', padding: '1px 6px' }}
+												onClick={() => quoteDetail()}
+											>
+												{ctx.t('hooks.quote')}
+											</button>
+										</Show>
 									</div>
 									<Show when={e.detail}>
 										<div
