@@ -1,28 +1,24 @@
 /**
- * Plugin options from `opencode.json`:
+ * Optional plugin options from `opencode.json` (for your own tooling only).
+ * This plugin does not open a socket or register a Desktop Server row by default.
  *
  * ```jsonc
  * {
  *   "plugins": [{
- *     "package": "file://D:/repos/opencode-plugins/oh-my-gui",
+ *     "package": "@involvex/oh-my-gui@latest",
  *     "options": {
  *       "hostname": "0.0.0.0",
  *       "port": 4000,
- *       "url": "http://192.168.178.90:4000",
- *       "password": "{env:OPENCODE_SERVER_PASSWORD}",
- *       "contributeServer": true
+ *       "url": "http://127.0.0.1:4000",
+ *       "contributeServer": false
  *     }
  *   }]
  * }
  * ```
  *
- * - `hostname` / `port` describe the OpenCode HTTP bind (defaults match
- *   `opencode service set hostname/port`). They do not start a second listener;
- *   the OpenCode service already owns the socket.
- * - `url` is the Desktop connect URL. When omitted, wildcard bind hosts
- *   (`0.0.0.0`, `::`) resolve to `http://127.0.0.1:<port>`.
- * - `contributeServer` (default true) registers that URL as a Desktop server
- *   entry so the app stops probing a stale host:port.
+ * - `hostname` / `port` describe the OpenCode HTTP bind. They do not start a listener.
+ * - `url` is a client-facing base URL when you need one; wildcards resolve to 127.0.0.1.
+ * - `contributeServer` defaults to false — plugin-owned Desktop server rows cannot be removed.
  */
 
 export const DEFAULT_HOSTNAME = '0.0.0.0'

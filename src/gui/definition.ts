@@ -51,6 +51,8 @@ export const definition = Plugin.define({
 			'tab.info': 'Info',
 			'tab.jobs': 'Jobs',
 			'pill.context': 'ctx',
+			'pill.context.compacting': 'Compacting…',
+			'pill.context.compacting.title': 'Context compaction in progress ({reason})',
 			'pill.commit': 'Commit',
 			'pill.commit.title': 'Commit the uncommitted changes in this repo',
 			'pill.commit.busy': 'Committing…',
@@ -103,7 +105,7 @@ export const definition = Plugin.define({
 				'Show Commit pill when there are uncommitted changes (tooltip lists files).',
 			'settings.notifyJobs': 'Notify when background jobs finish',
 			'settings.notifyJobs.description':
-				'System notification when a watched background shell or subagent leaves the running list.',
+				'System notification when a watched background job (shell, subagent, image, or codemode) leaves the running list, including sessions that are not focused.',
 			'settings.commitConfirm': 'Confirm before commit when changed files reach',
 			'settings.commitPrompt': 'Commit fallback prompt (blank = default)',
 			'toast.copied': 'Copied',

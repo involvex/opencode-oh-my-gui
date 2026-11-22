@@ -528,7 +528,13 @@ export default Plugin.define({
 			const reg = await ctx.tool.hook('execute.after', (e: any) => {
 				const sid = String(e?.sessionID ?? '')
 				const tool = String(e?.tool ?? '')
-				const status = String((e?.status ?? e?.error) ? 'error' : 'completed')
+				const rawStatus = String(e?.status ?? '').toLowerCase()
+				const status =
+					rawStatus === 'error' || rawStatus === 'failed' || e?.error != null
+						? 'error'
+						: rawStatus === 'completed' || rawStatus === 'succeeded' || !rawStatus
+							? 'completed'
+							: rawStatus
 				pushHook({
 					ts: now(),
 					type: 'tool.after',
@@ -544,7 +550,41 @@ export default Plugin.define({
 			logErr('tool after hook registration failed', err)
 		}
 
-		// --- events ---
+		const ensureContextSeed = (sid: string, parentID = '') => {
+			if (!sid || contextRows.has(sid)) {
+				if (sid && parentID) {
+					const existing = contextRows.get(sid)
+					if (existing && !existing.parentID) {
+						existing.parentID = parentID
+						contextRows.set(sid, existing)
+					}
+				}
+				return
+			}
+			contextRows.set(sid, {
+				sessionID: sid,
+				parentID,
+				agent: sessionAgent.get(sid) ?? '',
+				modelID: sessionModel.get(sid)?.modelID ?? '',
+				ctx: 1,
+				input: 1,
+				usable: 4096,
+				reserve: 409,
+				user: 0,
+				assistant: 0,
+				reasoning: 0,
+				toolArgs: 0,
+				toolOut: 0,
+				system: 0,
+				toolSchemas: 0,
+				other: 0,
+				source: 'event',
+				updatedAt: now(),
+				stale: false,
+			})
+		}
+
+		// --- events: only meaningful rows (tools stay via hooks; no catch-all event:*) ---
 		const controller = new AbortController()
 		void (async () => {
 			try {
@@ -559,43 +599,80 @@ export default Plugin.define({
 							const sid = String(e?.data?.sessionID ?? e?.sessionID ?? '')
 							const dir = String((ctx as any)?.location?.directory ?? '')
 							if (sid && dir) sessionDir.set(sid, dir)
-							pushHook({
-								ts: now(),
-								type: `event:${type}`,
-								tool: '',
-								status: 'info',
-								summary: type,
-								detail: sid ? `session ${sid.slice(0, 8)}` : '',
-								sessionID: sid,
-							})
+
 							if (type === 'session.created') {
 								const parent = e?.data?.parentID
-								if (sid && parent) sessionAgent.set(sid, sessionAgent.get(String(parent)) ?? '')
-							}
-							if (sid && !contextRows.has(sid)) {
-								contextRows.set(sid, {
+								if (sid && parent) {
+									sessionAgent.set(sid, sessionAgent.get(String(parent)) ?? '')
+									ensureContextSeed(sid, String(parent))
+								} else {
+									ensureContextSeed(sid)
+								}
+							} else if (type === 'session.forked') {
+								const parentID = String(e?.data?.parentID ?? '')
+								ensureContextSeed(sid, parentID)
+								if (sid && parentID) {
+									const row = contextRows.get(sid)
+									if (row) {
+										row.parentID = parentID
+										contextRows.set(sid, row)
+									}
+								}
+								pushHook({
+									ts: now(),
+									type: 'session.forked',
+									tool: '',
+									status: 'info',
+									summary: 'forked',
+									detail: parentID
+										? `parent ${parentID.slice(0, 8)}`
+										: sid
+											? `session ${sid.slice(0, 8)}`
+											: '',
 									sessionID: sid,
-									parentID: e?.data?.parentID ?? '',
-									agent: sessionAgent.get(sid) ?? String(e?.data?.agent ?? ''),
-									modelID:
-										sessionModel.get(sid)?.modelID ??
-										String(e?.data?.model?.id ?? e?.data?.modelID ?? ''),
-									ctx: 1,
-									input: 1,
-									usable: 4096,
-									reserve: 409,
-									user: 0,
-									assistant: 0,
-									reasoning: 0,
-									toolArgs: 0,
-									toolOut: 0,
-									system: 0,
-									toolSchemas: 0,
-									other: 0,
-									source: 'event',
-									updatedAt: now(),
-									stale: false,
 								})
+							} else if (
+								type === 'session.compaction.started' ||
+								type === 'session.compaction.ended' ||
+								type === 'session.compaction.failed'
+							) {
+								const reason = String(e?.data?.reason ?? 'auto')
+								const status =
+									type === 'session.compaction.started'
+										? 'running'
+										: type === 'session.compaction.failed'
+											? 'error'
+											: 'completed'
+								pushHook({
+									ts: now(),
+									type,
+									tool: '',
+									status,
+									summary: `compaction ${reason}`,
+									detail: sid ? `session ${sid.slice(0, 8)}` : '',
+									sessionID: sid,
+								})
+							} else if (type === 'session.shell.started' || type === 'session.shell.ended') {
+								const command = String(e?.data?.command ?? e?.data?.info?.command ?? '')
+								const shellStatus = String(
+									e?.data?.status ??
+										e?.data?.info?.status ??
+										(type.endsWith('started') ? 'running' : ''),
+								)
+								pushHook({
+									ts: now(),
+									type,
+									tool: 'shell',
+									status:
+										shellStatus === 'timeout'
+											? 'running'
+											: shellStatus || (type.endsWith('started') ? 'running' : 'completed'),
+									summary: command || 'shell',
+									detail: summarize(command || e?.data),
+									sessionID: sid,
+								})
+							} else if (sid && !contextRows.has(sid)) {
+								ensureContextSeed(sid, String(e?.data?.parentID ?? ''))
 							}
 						} catch (err) {
 							logErr('event handler failed', err)
@@ -607,18 +684,24 @@ export default Plugin.define({
 			}
 		})()
 
-		// --- fork hook: log when a session is forked ---
+		// --- fork hook: log when a session is forked (event is source of truth for parentID) ---
 		try {
 			const reg = await ctx.session.hook('fork', (f: any) => {
 				try {
 					const sid = String(f?.sessionID ?? '')
+					const parentID = String(f?.parentID ?? '')
+					if (sid && parentID) ensureContextSeed(sid, parentID)
 					pushHook({
 						ts: now(),
 						type: 'fork',
 						tool: '',
 						status: 'info',
 						summary: 'fork',
-						detail: sid ? `session ${sid.slice(0, 8)}` : '',
+						detail: parentID
+							? `parent ${parentID.slice(0, 8)}`
+							: sid
+								? `session ${sid.slice(0, 8)}`
+								: '',
 						sessionID: sid,
 					})
 				} catch (err) {

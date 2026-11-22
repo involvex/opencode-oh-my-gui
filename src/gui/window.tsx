@@ -24,7 +24,14 @@ import { InfoView } from './info'
 import { JobsView } from './jobs'
 import { sendCommit, useCommitChanges } from './commit'
 import { normalizeShellCode, runInTerminal } from './run-shell'
-import { formatTokens, readSessionUsage } from './usage'
+import { formatTokens, readCompaction, readSessionUsage } from './usage'
+import {
+	fetchJobList,
+	isRunningStatus,
+	jobFromLive,
+	runningJobCount,
+	type JobRow,
+} from './jobs-model'
 import ohMyGuiTheme from './themes/oh-my-gui.json'
 import ohMyGuiDawnTheme from './themes/oh-my-gui-dawn.json'
 import { tok } from './tokens'
@@ -273,7 +280,19 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 	ctx.add(ComposerPill, () => ({
 		id: 'context',
 		show: ({ session }) => {
-			const usage = readSessionUsage(session as MountedSession)
+			const mounted = session as MountedSession
+			const compaction = readCompaction(mounted)
+			if (compaction?.status === 'running') {
+				const reason = compaction.reason === 'manual' ? 'manual' : 'auto'
+				return {
+					label: ctx.t('pill.context.compacting'),
+					icon: ICON,
+					tone: 'warning' as const,
+					title: ctx.t('pill.context.compacting.title', { reason }),
+					run: () => open(session as any, 'context'),
+				}
+			}
+			const usage = readSessionUsage(mounted)
 			if (!usage) return undefined
 			if (usage.share != null) maybeWarnContext(session.id, usage.share)
 			if (usage.usable > 0 && usage.share != null) {
@@ -358,13 +377,99 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 		},
 	}))
 
+	/** Per-session listed jobs (for image/codemode pill counts and cross-session notify). */
+	const [listedBySession, setListedBySession] = createSignal<Record<string, JobRow[]>>({})
+	const seenJobs = new Map<string, Map<string, { label: string; kind: string }>>()
+
+	const pollListedJobs = async () => {
+		const refs = ctx.sessions.list()
+		const next: Record<string, JobRow[]> = {}
+		for (const ref of refs) {
+			try {
+				const client = (ref as any).server?.client
+				if (!client) continue
+				const { supported, rows } = await fetchJobList(client, ref.id, true)
+				if (!supported) {
+					if (listedBySession()[ref.key]) next[ref.key] = listedBySession()[ref.key]
+					continue
+				}
+				next[ref.key] = rows
+			} catch {
+				if (listedBySession()[ref.key]) next[ref.key] = listedBySession()[ref.key]
+			}
+		}
+		setListedBySession(next)
+	}
+
+	createEffect(() => {
+		const pollMs = Math.max(2000, Number((ctx.stores.prefs.value as any).pollMs) || 5000)
+		void pollListedJobs()
+		const timer = setInterval(() => void pollListedJobs(), pollMs)
+		return () => clearInterval(timer)
+	})
+
+	createEffect(() => {
+		const notify = (ctx.stores.prefs.value as any).notifyJobs !== false
+		const refs = ctx.sessions.list()
+		const listed = listedBySession()
+		const currentMounted = ctx.sessions.current()
+
+		for (const ref of refs) {
+			const liveRows =
+				currentMounted && currentMounted.key === ref.key
+					? (currentMounted.background ?? []).map((t) => jobFromLive(t, ref.id))
+					: []
+			const hist = listed[ref.key] ?? []
+			const liveIds = new Set(liveRows.map((r) => r.id))
+			const running = new Map<string, { label: string; kind: string }>()
+			for (const row of liveRows) {
+				running.set(row.id, { label: row.title, kind: row.kind })
+			}
+			for (const row of hist) {
+				if (liveIds.has(row.id)) continue
+				if (!isRunningStatus(row.kind, row.status)) continue
+				running.set(row.id, {
+					label: row.title || row.kind,
+					kind: row.kind,
+				})
+			}
+
+			const prev = seenJobs.get(ref.key)
+			if (!prev) {
+				seenJobs.set(ref.key, running)
+				continue
+			}
+			if (notify) {
+				for (const [id, meta] of prev) {
+					if (running.has(id)) continue
+					void ctx.attention.notify({
+						title: ctx.t('toast.jobs.done'),
+						message: ctx.t('toast.jobs.done.message', {
+							label: `${meta.kind}: ${meta.label}`,
+						}),
+						session: { server: ref.server.id, id: ref.id },
+						id: `${ctx.id}:job:${id}`,
+					})
+				}
+			}
+			seenJobs.set(ref.key, running)
+		}
+
+		const openKeys = new Set(refs.map((r) => r.key))
+		for (const key of [...seenJobs.keys()]) {
+			if (!openKeys.has(key)) seenJobs.delete(key)
+		}
+	})
+
 	ctx.add(ComposerPill, () => ({
 		id: 'jobs',
 		order: 2,
 		show: ({ session }) => {
 			const prefs = ctx.stores.prefs.value as any
 			if (prefs.showJobs === false) return undefined
-			const count = (session as MountedSession).background?.length ?? 0
+			const mounted = session as MountedSession
+			const listed = listedBySession()[mounted.key] ?? []
+			const count = runningJobCount(mounted.background ?? [], listed)
 			if (count <= 0) return undefined
 			return {
 				label: `${count} ${ctx.t('pill.jobs')}`,
@@ -375,32 +480,6 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 			}
 		},
 	}))
-
-	const seenJobs = new Map<string, Map<string, string>>()
-	createEffect(() => {
-		const session = ctx.sessions.current()
-		const notify = (ctx.stores.prefs.value as any).notifyJobs !== false
-		if (!session || !notify) return
-		const key = session.key
-		const current = new Map(
-			(session.background ?? []).map((t) => [t.id, t.label || t.agent || t.type] as const),
-		)
-		const prev = seenJobs.get(key)
-		if (!prev) {
-			seenJobs.set(key, current)
-			return
-		}
-		for (const [id, label] of prev) {
-			if (current.has(id)) continue
-			void ctx.attention.notify({
-				title: ctx.t('toast.jobs.done'),
-				message: ctx.t('toast.jobs.done.message', { label }),
-				session: { server: session.server.id, id: session.id },
-				id: `${ctx.id}:job:${id}`,
-			})
-		}
-		seenJobs.set(key, current)
-	})
 
 	ctx.add(SettingsPage, {
 		id: 'oh-my-gui',

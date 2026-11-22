@@ -128,3 +128,99 @@ export function formatCost(usd: number) {
 	if (usd < 0.01) return `$${usd.toFixed(4)}`
 	return `$${usd.toFixed(2)}`
 }
+
+export type CompactionStatus = 'running' | 'completed' | 'failed'
+
+export type CompactionState = {
+	status: CompactionStatus
+	reason: 'auto' | 'manual'
+	summary?: string
+	cost?: number
+	tokens?: number
+	input?: number
+	output?: number
+	reasoning?: number
+	cacheRead?: number
+	cacheWrite?: number
+	error?: string
+}
+
+function tokenTotal(
+	tokens:
+		| {
+				input?: number
+				output?: number
+				reasoning?: number
+				cache?: { read?: number; write?: number }
+		  }
+		| undefined,
+): number {
+	if (!tokens) return 0
+	return (
+		(tokens.input ?? 0) + (tokens.output ?? 0) + (tokens.reasoning ?? 0) + (tokens.cache?.read ?? 0)
+	)
+}
+
+/**
+ * Latest compaction message for a mounted session from the session store.
+ * Prefer a running compaction; otherwise the most recent completed/failed one.
+ */
+export function readCompaction(session: MountedSession): CompactionState | undefined {
+	try {
+		const data = session.server?.data
+		if (!data) return undefined
+		const messages = data.session.message.list(session.id) as Array<{
+			type?: string
+			status?: string
+			reason?: string
+			summary?: string
+			cost?: number
+			tokens?: {
+				input?: number
+				output?: number
+				reasoning?: number
+				cache?: { read?: number; write?: number }
+			}
+			error?: { message?: string } | string
+			time?: { created?: number }
+		}>
+		if (!Array.isArray(messages) || messages.length === 0) return undefined
+
+		const compactionMsgs = messages.filter((m) => m?.type === 'compaction')
+		if (compactionMsgs.length === 0) return undefined
+
+		const running = [...compactionMsgs].reverse().find((m) => m.status === 'running')
+		const latest = running ?? compactionMsgs[compactionMsgs.length - 1]
+		if (!latest) return undefined
+
+		const status =
+			latest.status === 'running' || latest.status === 'completed' || latest.status === 'failed'
+				? latest.status
+				: undefined
+		if (!status) return undefined
+
+		const tokens = latest.tokens
+		const err =
+			typeof latest.error === 'string'
+				? latest.error
+				: latest.error && typeof latest.error === 'object'
+					? String(latest.error.message ?? '')
+					: undefined
+
+		return {
+			status,
+			reason: latest.reason === 'manual' ? 'manual' : 'auto',
+			summary: latest.summary ? String(latest.summary) : undefined,
+			cost: typeof latest.cost === 'number' ? latest.cost : undefined,
+			tokens: tokenTotal(tokens),
+			input: tokens?.input,
+			output: tokens?.output,
+			reasoning: tokens?.reasoning,
+			cacheRead: tokens?.cache?.read,
+			cacheWrite: tokens?.cache?.write,
+			error: err || undefined,
+		}
+	} catch {
+		return undefined
+	}
+}

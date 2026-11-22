@@ -1,7 +1,7 @@
 {
 	"name": "@involvex/oh-my-gui",
-	"version": "0.5.1",
-	"description": "OpenCode Desktop GUI: live context usage, background jobs, session dashboard, themes, shell Run",
+	"version": "0.6.0",
+	"description": "OpenCode Desktop GUI: live context usage, background jobs (shell/subagent/image/codemode), compaction state, session dashboard, themes, shell Run",
 	"keywords": [
 		"opencode",
 		"opencode-plugin",

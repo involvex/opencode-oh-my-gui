@@ -239,6 +239,24 @@ export function InfoView(props: { session: MountedSession }) {
 					{(x) => (
 						<div style={{ display: 'flex', 'flex-direction': 'column', gap: '6px' }}>
 							<Row label="Session" value={x().sessionID} copyLabel="session ID" />
+							<Show when={x().parentID}>
+								<Row
+									label="Parent"
+									value={x().parentID}
+									copyLabel="parent session ID"
+									actions={[
+										{
+											label: 'Open',
+											title: 'Open parent session',
+											run: () => {
+												const id = String(x().parentID || '')
+												if (!id) return
+												ctx.tabs.open({ server: props.session.server.id, id }, { focus: true })
+											},
+										},
+									]}
+								/>
+							</Show>
 							<Row label="Agent" value={x().agent || '—'} copyLabel="agent" />
 							<Row label="Model" value={x().modelID || '—'} copyLabel="model" />
 							<Row label="Provider" value={x().providerID || '—'} copyLabel="provider" />

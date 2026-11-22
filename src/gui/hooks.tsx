@@ -90,7 +90,14 @@ export function HooksView(props: { session: MountedSession }) {
 		const status = String(e?.status ?? '').toLowerCase()
 		if (p === 'errors') return status === 'error' || status === 'failed' || type.includes('error')
 		if (p === 'tools') return type.startsWith('tool.')
-		if (p === 'events') return type.startsWith('event:')
+		if (p === 'events') {
+			return (
+				type.startsWith('event:') ||
+				type.startsWith('session.') ||
+				type === 'fork' ||
+				type === 'prompt'
+			)
+		}
 		if (p === 'prompt') return type === 'prompt'
 		return true
 	}

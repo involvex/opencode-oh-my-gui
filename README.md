@@ -11,36 +11,13 @@ Add to your `opencode.jsonc` (Desktop) or `opencode.json` using the V2 config fo
 ```json
 {
 	"$schema": "https://opencode.ai/config.json",
-	"server": {
-		"hostname": "0.0.0.0",
-		"port": 4000
-	},
-	"plugins": [
-		{
-			"package": "@involvex/oh-my-gui@latest",
-			"options": {
-				"hostname": "0.0.0.0",
-				"port": 4000,
-				"url": "http://127.0.0.1:4000"
-			}
-		}
-	]
+	"plugins": [{ "package": "@involvex/oh-my-gui@latest" }]
 }
 ```
 
 OpenCode will automatically install the plugin on next launch.
 
-### Server hostname / port
-
-This plugin does **not** open its own HTTP socket — OpenCode's service/`opencode serve` does.
-Defaults match `0.0.0.0:4000`. Configure them either:
-
-1. **Service (recommended for Desktop):**
-   `opencode service set hostname 0.0.0.0` then `opencode service set port 4000`
-2. **Plugin options** (above) — `hostname`/`port`/`url` are documented for your
-   own tooling; leave `contributeServer` false (default). Desktop plugin-owned
-   server rows cannot be removed from the UI.
-3. **Top-level `server`** in `opencode.json` — used by `opencode serve`
+This plugin does **not** open its own HTTP socket — OpenCode's service / `opencode serve` does. Configure hostname and port with `opencode service set` or a top-level `server` block for `opencode serve`. Optional plugin `hostname` / `port` / `url` values are only for your own tooling; leave `contributeServer` false (default). Desktop plugin-owned server rows cannot be removed from the UI.
 
 V2 plugin shape is `{ "package", "options" }` (not the old `["pkg", opts]` tuple).
 
@@ -68,18 +45,21 @@ bun run unregister
 
 ## Desktop GUI features
 
-| Feature         | How                                                                   |
-| --------------- | --------------------------------------------------------------------- |
-| Side panel      | Session panel menu, `Ctrl+\``, or `/omg`                              |
-| Auto-open       | On by default for new session tabs; toggle in Settings → Oh My GUI    |
-| Panel width     | Defaults to 380px; drag the divider (remembered per panel)            |
-| Themes          | **Oh My GUI** and **Oh My GUI Dawn** in Settings → Appearance → Theme |
-| Live context    | Composer pill and Context tab read official tokens, cost, and window  |
-| Context warning | Toast once per session when usage crosses the threshold (default 80%) |
-| Jobs            | Jobs tab + pill for background shells/subagents; optional notify      |
-| Commit pill     | Appears when the repo has uncommitted changes                         |
-| Hook quote      | Attach a hook detail as a composer quote                              |
-| Run shell fence | “Run in terminal” on `sh` / `bash` / `powershell` / `cmd` code blocks |
+| Feature         | How                                                                       |
+| --------------- | ------------------------------------------------------------------------- |
+| Side panel      | Session panel menu, `Ctrl+\``, or `/omg`                                  |
+| Auto-open       | On by default for new session tabs; toggle in Settings → Oh My GUI        |
+| Panel width     | Defaults to 380px; drag the divider (remembered per panel)                |
+| Themes          | **Oh My GUI** and **Oh My GUI Dawn** in Settings → Appearance → Theme     |
+| Live context    | Composer pill and Context tab read official tokens, cost, and window      |
+| Compaction      | Pill shows Compacting… while a summary runs; Context shows cost/tokens    |
+| Cache write     | Provider token card shows cache read and cache write                      |
+| Context warning | Toast once per session when usage crosses the threshold (default 80%)     |
+| Jobs            | Jobs tab + pill for shell, subagent, image, and codemode; optional notify |
+| Commit pill     | Appears when the repo has uncommitted changes                             |
+| Hook quote      | Attach a hook detail as a composer quote                                  |
+| Run shell fence | “Run in terminal” on `sh` / `bash` / `powershell` / `cmd` code blocks     |
+| Fork parent     | Info tab shows parent session with Open when the session was forked       |
 
 ```bash
 # GUI bundle (required for Desktop)
@@ -241,11 +221,15 @@ If you're migrating from V1:
 
 A "Commit N" pill appears next to the context pill in the composer when there are uncommitted changes in the session's repository. Clicking it sends `/commit` to the current session (queued). The pill reads changes from the review view and hides automatically once the repository is clean.
 
-## Context and jobs (0.5)
+## Context and jobs (0.6)
 
-The context pill and Context tab header use OpenCode Desktop's session store (`lastAssistantWithUsage`, model limits, `session.cost`) — the same source as the app header. The breakdown chart remains a local estimate from the server plugin.
+The context pill and Context tab header use OpenCode Desktop's session store (`lastAssistantWithUsage`, model limits, `session.cost`) — the same source as the app header. The breakdown chart remains a local estimate from the server plugin. Provider tokens include **cache write** as well as cache read.
 
-The Jobs tab lists live `session.background` tasks and, when available, `experimental.job.list` history (including descendant subagents). Click **Open** on a subagent row to focus that session. Optional desktop notifications fire when a watched background job leaves the running list.
+While a compaction message is `running`, the context pill shows **Compacting…** and the Context header shows auto/manual progress. When compaction completes or fails, the Context tab shows summary cost and token usage (2.3 background compaction).
+
+The Jobs tab lists live `session.background` tasks and, when available, `experimental.job.list` history (including descendant jobs). Rows are typed as **shell**, **subagent**, **image**, or **codemode**. Shell rows that hit a timeout stay shown as running (2.3.1 keeps them alive). Click **Open** on a subagent row to focus that child session. Optional desktop notifications fire when a watched job leaves the running list, including sessions that are not focused, and name the job kind.
+
+Hook log rows are limited to tools, forks, compaction, and shell start/end — the catch-all `event:*` stream is no longer stored so useful rows survive the 200-entry cap.
 
 ## Resources
 

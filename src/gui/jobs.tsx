@@ -5,33 +5,7 @@ import type { MountedSession } from '@opencode/plugin/gui'
 import type { definition } from './definition'
 import { createSessionPoll } from './poll'
 import { tok } from './tokens'
-
-type JobRow = {
-	id: string
-	kind: string
-	status: string
-	title: string
-	sessionID: string
-	childSessionID?: string
-	started?: number
-	source: 'live' | 'history'
-}
-
-function ageLabel(started?: number) {
-	if (!started || !Number.isFinite(started)) return ''
-	const sec = Math.max(0, Math.floor((Date.now() - started) / 1000))
-	if (sec < 60) return `${sec}s`
-	if (sec < 3600) return `${Math.floor(sec / 60)}m`
-	return `${Math.floor(sec / 3600)}h`
-}
-
-function statusColor(status: string) {
-	const s = status.toLowerCase()
-	if (s === 'error' || s === 'failed') return tok.error
-	if (s === 'running' || s === 'pending') return tok.warning
-	if (s === 'completed' || s === 'succeeded') return tok.success
-	return tok.muted
-}
+import { ageLabel, fetchJobList, jobFromLive, statusColor, type JobRow } from './jobs-model'
 
 export function JobsView(props: { session: MountedSession }) {
 	const ctx = usePlugin<typeof definition>()
@@ -45,15 +19,7 @@ export function JobsView(props: { session: MountedSession }) {
 
 	const live = (): JobRow[] => {
 		const tasks = props.session.background ?? []
-		return tasks.map((t) => ({
-			id: t.id,
-			kind: t.type,
-			status: 'running',
-			title: t.label || t.agent || t.type,
-			sessionID: props.session.id,
-			childSessionID: t.type === 'subagent' ? t.id : undefined,
-			source: 'live' as const,
-		}))
+		return tasks.map((t) => jobFromLive(t, props.session.id))
 	}
 
 	const refreshNow = async (
@@ -64,36 +30,10 @@ export function JobsView(props: { session: MountedSession }) {
 		setRefreshing(true)
 		try {
 			const client = (props.session as any).server?.client
-			const list = client?.experimental?.job?.list
-			if (typeof list !== 'function') {
-				if (disposed()) return 'skipped'
-				setListSupported(false)
-				setHistory([])
-				setError('')
-				setFailures(0)
-				setLastOk(new Date().toISOString())
-				return 'ok'
-			}
-			setListSupported(true)
-			const res = await list.call(client.experimental.job, {
-				sessionID,
-				descendants: true,
-			})
+			const { supported, rows } = await fetchJobList(client, sessionID, true)
 			if (disposed()) return 'skipped'
-			const items = Array.isArray(res) ? res : Array.isArray(res?.data) ? res.data : []
-			const rows: JobRow[] = items.map((j: any) => ({
-				id: String(j?.id ?? ''),
-				kind: String(j?.kind ?? ''),
-				status: String(j?.status ?? ''),
-				title:
-					String(j?.title ?? j?.description ?? j?.command ?? j?.agent ?? j?.kind ?? '') ||
-					String(j?.kind ?? 'job'),
-				sessionID: String(j?.sessionID ?? sessionID),
-				childSessionID: j?.childSessionID ? String(j.childSessionID) : undefined,
-				started: typeof j?.time?.started === 'number' ? j.time.started : undefined,
-				source: 'history' as const,
-			}))
-			setHistory(rows.filter((r) => r.id))
+			setListSupported(supported)
+			setHistory(rows)
 			setError('')
 			setFailures(0)
 			setLastOk(new Date().toISOString())
@@ -135,51 +75,81 @@ export function JobsView(props: { session: MountedSession }) {
 		return [...live(), ...hist]
 	}
 
-	const Row = (p: { row: JobRow }) => (
-		<div
-			style={{
-				padding: '6px 0',
-				'border-bottom': `1px solid ${tok.border}`,
-				display: 'flex',
-				'flex-direction': 'column',
-				gap: '2px',
-			}}
-		>
-			<div style={{ display: 'flex', 'justify-content': 'space-between', gap: '8px' }}>
-				<span style={{ 'font-weight': '600', 'font-size': '12px' }}>
-					{p.row.kind}
-					<span style={{ 'font-weight': '400', opacity: 0.7 }}> · {p.row.title}</span>
-				</span>
-				<span style={{ 'font-size': '11px', color: statusColor(p.row.status) }}>
-					{p.row.status}
-				</span>
-			</div>
+	const runningCount = () =>
+		merged().filter((r) => r.displayStatus.toLowerCase() === 'running').length
+
+	const Row = (p: { row: JobRow }) => {
+		const canOpen = p.row.kind === 'subagent' && !!(p.row.childSessionID || p.row.id)
+		const detail =
+			p.row.detail ||
+			(p.row.kind === 'shell' && p.row.command
+				? p.row.command
+				: p.row.kind === 'image'
+					? [p.row.model, p.row.path].filter(Boolean).join(' · ')
+					: '')
+		return (
 			<div
 				style={{
+					padding: '6px 0',
+					'border-bottom': `1px solid ${tok.border}`,
 					display: 'flex',
-					'justify-content': 'space-between',
-					'align-items': 'center',
-					'font-size': '11px',
-					opacity: 0.65,
+					'flex-direction': 'column',
+					gap: '2px',
 				}}
 			>
-				<span>
-					{p.row.source === 'live' ? 'live' : 'history'}
-					{p.row.started ? ` · ${ageLabel(p.row.started)}` : ''}
-				</span>
-				<Show when={p.row.kind === 'subagent' && (p.row.childSessionID || p.row.id)}>
-					<button
-						type="button"
-						class="oh-my-gui-btn"
-						style={{ 'font-size': '11px', padding: '1px 6px' }}
-						onClick={() => openSubagent(p.row)}
+				<div style={{ display: 'flex', 'justify-content': 'space-between', gap: '8px' }}>
+					<span style={{ 'font-weight': '600', 'font-size': '12px' }}>
+						{p.row.kind}
+						<span style={{ 'font-weight': '400', opacity: 0.7 }}> · {p.row.title}</span>
+					</span>
+					<span
+						style={{
+							'font-size': '11px',
+							color: statusColor(p.row.displayStatus, tok),
+						}}
 					>
-						Open
-					</button>
+						{p.row.displayStatus}
+						{p.row.status.toLowerCase() === 'timeout' ? ' (timeout)' : ''}
+					</span>
+				</div>
+				<Show when={detail}>
+					<div
+						style={{
+							'font-size': '11px',
+							opacity: 0.7,
+							'word-break': 'break-word',
+						}}
+					>
+						{detail}
+					</div>
 				</Show>
+				<div
+					style={{
+						display: 'flex',
+						'justify-content': 'space-between',
+						'align-items': 'center',
+						'font-size': '11px',
+						opacity: 0.65,
+					}}
+				>
+					<span>
+						{p.row.source === 'live' ? 'live' : 'history'}
+						{p.row.started ? ` · ${ageLabel(p.row.started)}` : ''}
+					</span>
+					<Show when={canOpen}>
+						<button
+							type="button"
+							class="oh-my-gui-btn"
+							style={{ 'font-size': '11px', padding: '1px 6px' }}
+							onClick={() => openSubagent(p.row)}
+						>
+							Open
+						</button>
+					</Show>
+				</div>
 			</div>
-		</div>
-	)
+		)
+	}
 
 	return (
 		<div style={{ display: 'flex', 'flex-direction': 'column', gap: '8px' }}>
@@ -192,7 +162,7 @@ export function JobsView(props: { session: MountedSession }) {
 				}}
 			>
 				<div style={{ 'font-size': '11px', opacity: 0.6 }}>
-					{live().length} running
+					{runningCount()} running
 					{listSupported() ? ` · ${history().length} listed` : ' · job list unavailable'}
 					{lastOk() ? ` · ${new Date(lastOk()).toLocaleTimeString()}` : ''}
 					{failures() > 0 ? ' · retrying' : ''}

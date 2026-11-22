@@ -6,7 +6,7 @@ import type { definition } from './definition'
 import { DashboardRpc } from '../rpc'
 import { createSessionPoll } from './poll'
 import { SERIES, pctTone, tok } from './tokens'
-import { formatCost, formatTokens, readSessionUsage } from './usage'
+import { formatCost, formatTokens, readCompaction, readSessionUsage } from './usage'
 
 const CARD = {
 	display: 'flex',
@@ -99,6 +99,7 @@ export function ContextView(props: { session: MountedSession }) {
 	})
 
 	const usage = () => readSessionUsage(props.session)
+	const compaction = () => readCompaction(props.session)
 	const estimate = () => rows()[0]
 	const fmt = formatTokens
 
@@ -233,6 +234,53 @@ export function ContextView(props: { session: MountedSession }) {
 									{h().risk !== 'unknown' ? ` · ${h().risk}` : ''}
 								</span>
 							</div>
+							<Show when={compaction()}>
+								{(c) => {
+									const tone =
+										c().status === 'running'
+											? tok.warning
+											: c().status === 'failed'
+												? tok.error
+												: tok.success
+									return (
+										<div
+											role="status"
+											aria-live="polite"
+											style={{
+												'margin-top': '4px',
+												'padding-top': '6px',
+												'border-top': `1px solid ${tok.border}`,
+												display: 'flex',
+												'flex-direction': 'column',
+												gap: '2px',
+												'font-size': '11px',
+											}}
+										>
+											<span style={{ 'font-weight': '600', color: tone }}>
+												{c().status === 'running'
+													? `Compacting (${c().reason})`
+													: c().status === 'failed'
+														? `Compaction failed (${c().reason})`
+														: `Compaction ${c().status} (${c().reason})`}
+											</span>
+											<Show when={c().status === 'running'}>
+												<span style={{ opacity: 0.75 }}>Background summary is being written…</span>
+											</Show>
+											<Show when={c().status !== 'running' && (c().cost || c().tokens)}>
+												<span style={{ opacity: 0.75 }}>
+													{c().cost != null ? formatCost(c().cost!) : ''}
+													{c().tokens != null
+														? `${c().cost != null ? ' · ' : ''}${fmt(c().tokens!)} tokens`
+														: ''}
+												</span>
+											</Show>
+											<Show when={c().error}>
+												<span style={{ color: tok.error }}>{c().error}</span>
+											</Show>
+										</div>
+									)
+								}}
+							</Show>
 						</div>
 					)
 				}}
@@ -367,6 +415,62 @@ export function ContextView(props: { session: MountedSession }) {
 												<div>
 													<span style={{ opacity: 0.65 }}>Cache read:</span> {fmt(u().cacheRead)}
 												</div>
+												<div>
+													<span style={{ opacity: 0.65 }}>Cache write:</span> {fmt(u().cacheWrite)}
+												</div>
+											</div>
+										</div>
+									)}
+								</Show>
+
+								<Show
+									when={(() => {
+										const c = compaction()
+										return c && c.status !== 'running' ? c : undefined
+									})()}
+								>
+									{(c) => (
+										<div style={CARD}>
+											<div
+												style={{
+													display: 'flex',
+													'justify-content': 'space-between',
+													'align-items': 'center',
+												}}
+											>
+												<span style={{ 'font-size': '12px', 'font-weight': '500' }}>
+													Last compaction
+												</span>
+												<span style={{ 'font-size': '11px', opacity: 0.55 }}>
+													{c().reason}
+													{c().cost != null ? ` · ${formatCost(c().cost!)}` : ''}
+												</span>
+											</div>
+											<div
+												style={{
+													display: 'grid',
+													'grid-template-columns': '1fr 1fr',
+													gap: '4px 10px',
+													'font-size': '11px',
+												}}
+											>
+												<div>
+													<span style={{ opacity: 0.65 }}>Status:</span> {c().status}
+												</div>
+												<div>
+													<span style={{ opacity: 0.65 }}>Tokens:</span>{' '}
+													{c().tokens != null ? fmt(c().tokens!) : '—'}
+												</div>
+												<Show when={c().input != null}>
+													<div>
+														<span style={{ opacity: 0.65 }}>Input:</span> {fmt(c().input!)}
+													</div>
+												</Show>
+												<Show when={c().output != null}>
+													<div>
+														<span style={{ opacity: 0.65 }}>Output:</span> {fmt(c().output!)}
+													</div>
+												</Show>
 											</div>
 										</div>
 									)}
