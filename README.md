@@ -45,25 +45,25 @@ bun run unregister
 
 ## Desktop GUI features
 
-| Feature         | How                                                                       |
-| --------------- | ------------------------------------------------------------------------- |
-| Side panel      | Session panel menu, `Ctrl+\``, or `/omg`                                  |
-| Auto-open       | On by default for new session tabs; toggle in Settings → Oh My GUI        |
-| Panel width     | Defaults to 380px; drag the divider (remembered per panel)                |
-| Themes          | **Oh My GUI** and **Oh My GUI Dawn** in Settings → Appearance → Theme     |
-| Live context    | Composer pill and Context tab read official tokens, cost, and window      |
-| Compaction      | Pill shows Compacting… while a summary runs; Context shows cost/tokens    |
-| Cache write     | Provider token card shows cache read and cache write                      |
-| Allowance       | Context tab shows OpenCode Go meters and Console budgets when available   |
-| Context warning | Toast once per session when usage crosses the threshold (default 80%)     |
-| Jobs            | Jobs tab + pill for shell, subagent, image, and codemode; optional notify |
-| Waiting         | Pill + Info list for permissions, forms, and stranded/queued prompts      |
-| Stats           | Workspace stats from `session.stats` (range, models, tools, activity)     |
-| Commit pill     | Appears when the repo has uncommitted changes                             |
-| Goal            | Info tab shows the session goal from `opencode.goal` when present         |
-| Hook quote      | Attach a hook detail as a composer quote                                  |
-| Run shell fence | “Run in terminal” on `sh` / `bash` / `powershell` / `cmd` code blocks     |
-| Fork parent     | Info tab shows parent session with Open when the session was forked       |
+| Feature         | How                                                                          |
+| --------------- | ---------------------------------------------------------------------------- |
+| Side panel      | Session panel menu, `Ctrl+\``, or `/omg`                                     |
+| Auto-open       | On by default for new session tabs; toggle in Settings → Oh My GUI           |
+| Panel width     | Defaults to 380px; drag the divider (remembered per panel)                   |
+| Themes          | **Oh My GUI**, **Dawn**, **Hacker**, **Hacker AMOLED** in Appearance → Theme |
+| Live context    | Composer pill and Context tab read official tokens, cost, and window         |
+| Compaction      | Pill shows Compacting… while a summary runs; Context shows cost/tokens       |
+| Cache write     | Provider token card shows cache read and cache write                         |
+| Allowance       | Context tab shows OpenCode Go meters and Console budgets when available      |
+| Context warning | Toast once per session when usage crosses the threshold (default 80%)        |
+| Jobs            | Jobs tab + pill for shell, subagent, image, and codemode; optional notify    |
+| Waiting         | Pill + Info list for permissions, forms, and stranded/queued prompts         |
+| Stats           | Workspace stats from `session.stats` (range, models, tools, activity)        |
+| Commit pill     | Appears when the repo has uncommitted changes                                |
+| Goal            | Info tab shows the session goal from `opencode.goal` when present            |
+| Hook quote      | Attach a hook detail as a composer quote                                     |
+| Run shell fence | “Run in terminal” on `sh` / `bash` / `powershell` / `cmd` code blocks        |
+| Fork parent     | Info tab shows parent session with Open when the session was forked          |
 
 ```bash
 # GUI bundle (required for Desktop)
