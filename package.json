@@ -37,12 +37,12 @@
 		"effect": "$effect"
 	},
 	"dependencies": {
-		"@opencode/plugin": "^2.3.2",
-		"@opencode/sdk": "^2.3.2",
+		"@opencode/plugin": "^2.4.1",
+		"@opencode/sdk": "^2.4.1",
 		"effect": "^4.1.5",
 		"@opentui/core": ">=0.8.1",
 		"solid-js": ">=1.9.18",
-		"@opentui/solid": "0.9.7"
+		"@opentui/solid": "0.9.8"
 	},
 	"devDependencies": {
 		"@clack/prompts": "^1.9.0",
