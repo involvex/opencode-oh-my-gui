@@ -2,7 +2,7 @@
 
 OpenCode V2 desktop GUI plugin: session dashboard (context, agents, hooks, jobs, info), live usage from the session store, composer pills, and Appearance themes.
 
-**Requires OpenCode Desktop / `@opencode/plugin` ≥ 2.3.0.**
+**Requires OpenCode Desktop / `@opencode/plugin` ≥ 2.3.2.**
 
 ## Installation
 
@@ -54,9 +54,12 @@ bun run unregister
 | Live context    | Composer pill and Context tab read official tokens, cost, and window      |
 | Compaction      | Pill shows Compacting… while a summary runs; Context shows cost/tokens    |
 | Cache write     | Provider token card shows cache read and cache write                      |
+| Allowance       | Context tab shows OpenCode Go meters and Console budgets when available   |
 | Context warning | Toast once per session when usage crosses the threshold (default 80%)     |
 | Jobs            | Jobs tab + pill for shell, subagent, image, and codemode; optional notify |
+| Waiting         | Pill + Info list for permissions, forms, and stranded/queued prompts      |
 | Commit pill     | Appears when the repo has uncommitted changes                             |
+| Goal            | Info tab shows the session goal from `opencode.goal` when present         |
 | Hook quote      | Attach a hook detail as a composer quote                                  |
 | Run shell fence | “Run in terminal” on `sh` / `bash` / `powershell` / `cmd` code blocks     |
 | Fork parent     | Info tab shows parent session with Open when the session was forked       |
@@ -230,6 +233,14 @@ While a compaction message is `running`, the context pill shows **Compacting…*
 The Jobs tab lists live `session.background` tasks and, when available, `experimental.job.list` history (including descendant jobs). Rows are typed as **shell**, **subagent**, **image**, or **codemode**. Shell rows that hit a timeout stay shown as running (2.3.1 keeps them alive). Click **Open** on a subagent row to focus that child session. Optional desktop notifications fire when a watched job leaves the running list, including sessions that are not focused, and name the job kind.
 
 Hook log rows are limited to tools, forks, compaction, and shell start/end — the catch-all `event:*` stream is no longer stored so useful rows survive the 200-entry cap.
+
+## Live store dashboard (0.7)
+
+Info and Agents read the Desktop session store instead of polling the server overview/agents RPC. Git branch comes from `location.vcs`, MCP from `location.mcp.server`, children from `session.family`, and the goal from the first-party `opencode.goal` RPC (empty when that plugin is absent). The dead Todos row is gone.
+
+The Context tab shows a **Provider allowance** card when `location.usage.limits` reports OpenCode Go meters or Console budgets. The card stays hidden when the workspace has no limits.
+
+A **Waiting** composer pill appears for pending permissions, open forms, and inbox items whose pending status is `queued` or `stranded`. Opening it focuses the Info tab waiting list. Optional notifications use a separate `notifyWaiting` preference (on by default). Diagnostics copy includes the store snapshot (overview, agents, allowance, waiting, goal) plus the estimate and hooks.
 
 ## Resources
 

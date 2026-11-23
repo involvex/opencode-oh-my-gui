@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { For, Show, createSignal } from 'solid-js'
+import { For, Show, createEffect, createSignal } from 'solid-js'
 import { usePlugin } from '@opencode/plugin/gui'
 import type { MountedSession } from '@opencode/plugin/gui'
 import type { definition } from './definition'
@@ -7,6 +7,7 @@ import { DashboardRpc } from '../rpc'
 import { createSessionPoll } from './poll'
 import { SERIES, pctTone, tok } from './tokens'
 import { formatCost, formatTokens, readCompaction, readSessionUsage } from './usage'
+import { ensureStoreSynced, readAllowance } from './session-store'
 
 const CARD = {
 	display: 'flex',
@@ -98,10 +99,44 @@ export function ContextView(props: { session: MountedSession }) {
 		tick: (sessionID, disposed) => refreshNow(sessionID, disposed),
 	})
 
+	createEffect(() => {
+		ensureStoreSynced(props.session)
+	})
+
 	const usage = () => readSessionUsage(props.session)
 	const compaction = () => readCompaction(props.session)
+	const allowance = () => {
+		ensureStoreSynced(props.session)
+		return readAllowance(props.session)
+	}
 	const estimate = () => rows()[0]
 	const fmt = formatTokens
+
+	const formatReset = (ts: number) => {
+		if (!ts) return ''
+		try {
+			return new Date(ts).toLocaleString()
+		} catch {
+			return ''
+		}
+	}
+
+	const openUsageUrl = async (url: string) => {
+		const target = String(url || '').trim()
+		if (!target) return
+		try {
+			const anyCtx = ctx as any
+			if (typeof anyCtx?.system?.openExternal === 'function') {
+				await anyCtx.system.openExternal(target)
+				return
+			}
+			if (typeof anyCtx?.desktop?.openExternal === 'function') {
+				await anyCtx.desktop.openExternal(target)
+			}
+		} catch {
+			/* ignore */
+		}
+	}
 
 	const header = () => {
 		const u = usage()
@@ -284,6 +319,116 @@ export function ContextView(props: { session: MountedSession }) {
 						</div>
 					)
 				}}
+			</Show>
+
+			<Show when={allowance()}>
+				{(a) => (
+					<div style={CARD}>
+						<div
+							style={{
+								display: 'flex',
+								'justify-content': 'space-between',
+								'align-items': 'center',
+								gap: '8px',
+							}}
+						>
+							<span style={{ 'font-size': '12px', 'font-weight': '500' }}>
+								{ctx.t('context.allowance')}
+								{a().workspaceName ? ` · ${a().workspaceName}` : ''}
+							</span>
+							<Show when={a().usageURL}>
+								<button
+									type="button"
+									class="oh-my-gui-btn"
+									style={{ 'font-size': '11px', padding: '1px 6px' }}
+									onClick={() => void openUsageUrl(a().usageURL)}
+								>
+									{ctx.t('context.allowance.open')}
+								</button>
+							</Show>
+						</div>
+						<For each={a().meters}>
+							{(m) => (
+								<div style={{ display: 'flex', 'flex-direction': 'column', gap: '2px' }}>
+									<div
+										style={{
+											display: 'flex',
+											'justify-content': 'space-between',
+											'font-size': '11px',
+										}}
+									>
+										<span>
+											{m.label}
+											{m.limited ? ` · ${ctx.t('context.allowance.limited')}` : ''}
+										</span>
+										<span style={{ color: m.limited ? tok.error : pctTone(m.percent) }}>
+											{m.percent.toFixed(0)}%
+										</span>
+									</div>
+									<div style={{ ...TRACK, height: '4px' }}>
+										<div
+											style={{
+												width: `${Math.min(100, Math.max(0, m.percent))}%`,
+												height: '100%',
+												'background-color': m.limited ? tok.error : pctTone(m.percent),
+											}}
+										/>
+									</div>
+									<Show when={m.resetsAt}>
+										<span style={{ 'font-size': '10px', opacity: 0.6 }}>
+											{ctx.t('context.allowance.resets', {
+												when: formatReset(m.resetsAt),
+											})}
+										</span>
+									</Show>
+								</div>
+							)}
+						</For>
+						<For each={a().budgets}>
+							{(b) => {
+								const pct = b.limit > 0 ? (b.spent / b.limit) * 100 : null
+								return (
+									<div style={{ display: 'flex', 'flex-direction': 'column', gap: '2px' }}>
+										<div
+											style={{
+												display: 'flex',
+												'justify-content': 'space-between',
+												'font-size': '11px',
+											}}
+										>
+											<span>
+												{ctx.t('context.allowance.budget', {
+													spent: formatCost(b.spent),
+													limit: formatCost(b.limit),
+												})}
+												{b.shared ? ' · shared' : ''}
+											</span>
+											<span style={{ color: pctTone(pct) }}>
+												{pct == null ? '—' : `${pct.toFixed(0)}%`}
+											</span>
+										</div>
+										<div style={{ ...TRACK, height: '4px' }}>
+											<div
+												style={{
+													width: `${pct == null ? 0 : Math.min(100, Math.max(0, pct))}%`,
+													height: '100%',
+													'background-color': pctTone(pct),
+												}}
+											/>
+										</div>
+										<Show when={b.resetsAt}>
+											<span style={{ 'font-size': '10px', opacity: 0.6 }}>
+												{ctx.t('context.allowance.resets', {
+													when: formatReset(b.resetsAt),
+												})}
+											</span>
+										</Show>
+									</div>
+								)
+							}}
+						</For>
+					</div>
+				)}
 			</Show>
 
 			<Show

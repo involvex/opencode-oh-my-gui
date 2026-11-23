@@ -1,104 +1,79 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { Show, createSignal } from 'solid-js'
+import { For, Show, createEffect, createSignal, onCleanup } from 'solid-js'
 import { usePlugin } from '@opencode/plugin/gui'
 import type { MountedSession } from '@opencode/plugin/gui'
 import type { definition } from './definition'
 import { DashboardRpc } from '../rpc'
-import { createSessionPoll } from './poll'
+import type { GoalState } from './goal-rpc'
+import {
+	buildStoreDiagnostics,
+	ensureStoreSynced,
+	readSessionOverview,
+	readWaiting,
+	subscribeGoal,
+	type WaitingItem,
+} from './session-store'
+import { formatCost } from './usage'
 import { tok } from './tokens'
+
+/** Set by the waiting pill; InfoView scrolls the waiting section into view. */
+export const [waitingFocusAt, setWaitingFocusAt] = createSignal(0)
 
 export function InfoView(props: { session: MountedSession }) {
 	const ctx = usePlugin<typeof definition>()
-	const [data, setData] = createSignal<any>(null)
-	const [error, setError] = createSignal('')
-	const [loaded, setLoaded] = createSignal(false)
 	const [notice, setNotice] = createSignal('')
-	const [lastOk, setLastOk] = createSignal('')
-	const [failures, setFailures] = createSignal(0)
-	const [refreshing, setRefreshing] = createSignal(false)
+	const [goal, setGoal] = createSignal<GoalState | null>(null)
+	const [waitingEl, setWaitingEl] = createSignal<HTMLDivElement | null>(null)
 
-	const withTimeout = async <T,>(promise: Promise<T>, ms: number): Promise<T> => {
-		let timer: ReturnType<typeof setTimeout> | undefined
-		try {
-			return await Promise.race([
-				promise,
-				new Promise<T>((_, reject) => {
-					timer = setTimeout(() => reject(new Error(`Request timed out after ${ms}ms`)), ms)
-				}),
-			])
-		} finally {
-			if (timer) clearTimeout(timer)
-		}
-	}
-
-	const refreshNow = async (
-		sessionID: string,
-		disposed: () => boolean,
-	): Promise<'ok' | 'error' | 'skipped'> => {
-		if (disposed() || refreshing()) return 'skipped'
-		setRefreshing(true)
-		try {
-			const result = (await withTimeout(
-				ctx.client.rpc(DashboardRpc).overview({ sessionID }),
-				8000,
-			)) as any
-			if (disposed()) return 'skipped'
-			setData(result?.data ?? null)
-			setError('')
-			setFailures(0)
-			setLastOk(new Date().toISOString())
-			return 'ok'
-		} catch (err) {
-			if (disposed()) return 'skipped'
-			setFailures((n) => n + 1)
-			setError(err instanceof Error ? err.message : String(err))
-			return 'error'
-		} finally {
-			setRefreshing(false)
-			if (!disposed()) setLoaded(true)
-		}
-	}
-
-	createSessionPoll({
-		sessionID: () => props.session.id,
-		reset: () => {
-			setRefreshing(false)
-			setLoaded(false)
-			setData(null)
-			setError('')
-			setFailures(0)
-			setLastOk('')
-		},
-		intervalMs: () => Number((ctx.stores.prefs.value as any).pollMs) || 5000,
-		tick: (sessionID, disposed) => refreshNow(sessionID, disposed),
+	createEffect(() => {
+		const session = props.session
+		ensureStoreSynced(session)
+		const stop = subscribeGoal(ctx.client as any, session.id, (g) => setGoal(g))
+		onCleanup(stop)
 	})
+
+	createEffect(() => {
+		const at = waitingFocusAt()
+		if (!at) return
+		const el = waitingEl()
+		if (el) {
+			queueMicrotask(() => el.scrollIntoView({ behavior: 'smooth', block: 'nearest' }))
+		}
+	})
+
+	const overview = () => {
+		ensureStoreSynced(props.session)
+		return readSessionOverview(props.session)
+	}
+	const waiting = () => {
+		ensureStoreSynced(props.session)
+		return readWaiting(props.session)
+	}
 
 	const copyDiagnostics = async () => {
 		try {
 			const client = ctx.client.rpc(DashboardRpc)
-			const [ov, ctxRes, hk] = await Promise.all([
-				client.overview({ sessionID: props.session.id }).catch(() => null),
+			const [ctxRes, hk] = await Promise.all([
 				client.context({ sessionID: props.session.id }).catch(() => null),
 				client.hooks({ sessionID: props.session.id, limit: 50 }).catch(() => null),
 			])
+			const store = buildStoreDiagnostics(props.session, goal())
 			const bundle = {
 				generatedAt: new Date().toISOString(),
 				sessionID: props.session.id,
-				overview: (ov as any)?.data ?? d() ?? null,
+				...store,
 				context: (ctxRes as any)?.rows ?? [],
 				hooks: (hk as any)?.entries ?? [],
 			}
 			const text = JSON.stringify(bundle, null, 2)
 			if (navigator?.clipboard?.writeText) await navigator.clipboard.writeText(text)
 			else console.log(text)
-			setNotice('Diagnostics copied (sanitized)')
+			setNotice(ctx.t('toast.copied'))
 		} catch (err) {
 			setNotice(err instanceof Error ? err.message : String(err))
 		}
 		setTimeout(() => setNotice(''), 1800)
 	}
-
-	const d = () => data()
 
 	const copyValue = async (value: string, label: string) => {
 		const text = String(value || '').trim()
@@ -186,6 +161,36 @@ export function InfoView(props: { session: MountedSession }) {
 		</div>
 	)
 
+	const WaitingRow = (p: { item: WaitingItem }) => (
+		<div
+			style={{
+				display: 'flex',
+				'flex-direction': 'column',
+				gap: '2px',
+				padding: '8px',
+				'border-radius': '8px',
+				border: `1px solid ${tok.border}`,
+				'background-color': tok.surface,
+			}}
+		>
+			<div style={{ display: 'flex', 'justify-content': 'space-between', gap: '8px' }}>
+				<span style={{ 'font-weight': '600' }}>{p.item.title}</span>
+				<span style={{ 'font-size': '10px', opacity: 0.65, 'text-transform': 'uppercase' }}>
+					{p.item.kind}
+					{p.item.status ? ` · ${p.item.status}` : ''}
+				</span>
+			</div>
+			<Show when={p.item.detail}>
+				<div style={{ 'font-size': '11px', opacity: 0.75, 'word-break': 'break-word' }}>
+					{p.item.detail}
+				</div>
+			</Show>
+		</div>
+	)
+
+	const g = () => goal()
+	const d = () => overview()
+
 	return (
 		<div style={{ display: 'flex', 'flex-direction': 'column', gap: '6px', 'font-size': '12px' }}>
 			<div
@@ -201,85 +206,163 @@ export function InfoView(props: { session: MountedSession }) {
 					<button type="button" class="oh-my-gui-btn" onClick={() => void copyDiagnostics()}>
 						Copy diagnostics
 					</button>
-					<button
-						type="button"
-						class="oh-my-gui-btn"
-						disabled={refreshing()}
-						onClick={() => void refreshNow(props.session.id, () => false)}
-					>
-						{refreshing() ? 'Refreshing…' : 'Refresh'}
-					</button>
+					<span style={{ 'font-size': '11px', opacity: 0.55 }}>Live from session store</span>
 					<Show when={notice()}>
 						<span role="status" aria-live="polite" style={{ 'font-size': '11px', opacity: 0.7 }}>
 							{notice()}
 						</span>
 					</Show>
 				</div>
-				<div style={{ 'font-size': '11px', opacity: 0.55 }}>
-					{lastOk()
-						? `Updated ${new Date(lastOk()).toLocaleTimeString()}${failures() > 0 ? ' · backoff' : ''}`
-						: ''}
-				</div>
 			</div>
+
 			<Show
-				when={loaded()}
+				when={d()}
 				fallback={
 					<div role="status" aria-live="polite">
 						Loading info...
 					</div>
 				}
 			>
-				<Show when={error()}>
-					<div role="alert" style={{ color: tok.error }}>
-						Unavailable: {error()}
-						{failures() > 1 ? ` (attempt ${failures()})` : ''} · retrying
-					</div>
-				</Show>
-				<Show when={d()}>
-					{(x) => (
-						<div style={{ display: 'flex', 'flex-direction': 'column', gap: '6px' }}>
-							<Row label="Session" value={x().sessionID} copyLabel="session ID" />
-							<Show when={x().parentID}>
-								<Row
-									label="Parent"
-									value={x().parentID}
-									copyLabel="parent session ID"
-									actions={[
-										{
-											label: 'Open',
-											title: 'Open parent session',
-											run: () => {
-												const id = String(x().parentID || '')
-												if (!id) return
-												ctx.tabs.open({ server: props.session.server.id, id }, { focus: true })
-											},
-										},
-									]}
-								/>
-							</Show>
-							<Row label="Agent" value={x().agent || '—'} copyLabel="agent" />
-							<Row label="Model" value={x().modelID || '—'} copyLabel="model" />
-							<Row label="Provider" value={x().providerID || '—'} copyLabel="provider" />
+				{(x) => (
+					<div style={{ display: 'flex', 'flex-direction': 'column', gap: '6px' }}>
+						<Show when={x().title}>
+							<Row label="Title" value={x().title} copyLabel="title" />
+						</Show>
+						<Row label="Session" value={x().sessionID} copyLabel="session ID" />
+						<Show when={x().parentID}>
 							<Row
-								label="Directory"
-								value={x().directory || '—'}
-								copyLabel="path"
+								label="Parent"
+								value={x().parentID}
+								copyLabel="parent session ID"
 								actions={[
 									{
 										label: 'Open',
-										title: 'Open directory (falls back to copy)',
-										run: () => openPathOrCopy(x().directory || ''),
+										title: 'Open parent session',
+										run: () => {
+											const id = String(x().parentID || '')
+											if (!id) return
+											ctx.tabs.open({ server: props.session.server.id, id }, { focus: true })
+										},
 									},
 								]}
 							/>
-							<Row label="Git branch" value={x().gitBranch || '—'} copyLabel="branch" />
-							<Row label="MCP" value={(x().mcp || []).join(', ') || '—'} />
-							<Row label="Todos" value={String(x().todos ?? '—')} />
-							<Row label="Updated" value={x().updatedAt || '—'} />
-						</div>
+						</Show>
+						<Show when={x().forkFrom && x().forkFrom !== x().parentID}>
+							<Row label="Forked from" value={x().forkFrom} copyLabel="fork session ID" />
+						</Show>
+						<Row label="Agent" value={x().agent || '—'} copyLabel="agent" />
+						<Row label="Model" value={x().modelID || '—'} copyLabel="model" />
+						<Row label="Provider" value={x().providerID || '—'} copyLabel="provider" />
+						<Row
+							label="Directory"
+							value={x().directory || '—'}
+							copyLabel="path"
+							actions={[
+								{
+									label: 'Open',
+									title: 'Open directory (falls back to copy)',
+									run: () => openPathOrCopy(x().directory || ''),
+								},
+							]}
+						/>
+						<Row label="Git branch" value={x().gitBranch || '—'} copyLabel="branch" />
+						<Row label="MCP" value={x().mcp.join(', ') || '—'} />
+						<Row label="Status" value={x().status || '—'} />
+						<Show when={x().outcome}>
+							<Row label="Outcome" value={x().outcome} />
+						</Show>
+						<Show when={x().cost > 0}>
+							<Row label="Cost" value={formatCost(x().cost)} />
+						</Show>
+						<Show when={x().children.length > 0}>
+							<div style={{ display: 'flex', 'flex-direction': 'column', gap: '4px' }}>
+								<b>Children</b>
+								<For each={x().children}>
+									{(id) => (
+										<div style={{ display: 'flex', gap: '6px', 'align-items': 'center' }}>
+											<span style={{ 'font-family': 'monospace', 'font-size': '11px' }}>
+												{id.slice(0, 12)}…
+											</span>
+											<button
+												type="button"
+												class="oh-my-gui-btn"
+												style={{ 'font-size': '11px', padding: '1px 6px' }}
+												onClick={() =>
+													ctx.tabs.open({ server: props.session.server.id, id }, { focus: true })
+												}
+											>
+												Open
+											</button>
+										</div>
+									)}
+								</For>
+							</div>
+						</Show>
+						<Row label="Updated" value={x().updatedAt || '—'} />
+					</div>
+				)}
+			</Show>
+
+			<div
+				style={{
+					'margin-top': '4px',
+					padding: '8px',
+					'border-radius': '8px',
+					border: `1px solid ${tok.border}`,
+					'background-color': tok.surface,
+					display: 'flex',
+					'flex-direction': 'column',
+					gap: '4px',
+				}}
+			>
+				<span style={{ 'font-weight': '600' }}>{ctx.t('info.goal')}</span>
+				<Show
+					when={g()}
+					fallback={
+						<span style={{ 'font-size': '11px', opacity: 0.65 }}>{ctx.t('info.goal.none')}</span>
+					}
+				>
+					{(goalState) => (
+						<>
+							<div style={{ 'word-break': 'break-word' }}>{goalState().objective}</div>
+							<div style={{ 'font-size': '11px', opacity: 0.75 }}>
+								{goalState().status}
+								{` · ${goalState().rounds}/${goalState().maxRounds} rounds`}
+								{goalState().stalls != null ? ` · ${goalState().stalls} stalls` : ''}
+							</div>
+							<Show when={goalState().reason}>
+								<div style={{ 'font-size': '11px', opacity: 0.7 }}>{goalState().reason}</div>
+							</Show>
+						</>
 					)}
 				</Show>
-			</Show>
+			</div>
+
+			<div
+				ref={setWaitingEl}
+				style={{
+					'margin-top': '4px',
+					display: 'flex',
+					'flex-direction': 'column',
+					gap: '6px',
+				}}
+			>
+				<div
+					style={{ display: 'flex', 'justify-content': 'space-between', 'align-items': 'center' }}
+				>
+					<span style={{ 'font-weight': '600' }}>{ctx.t('info.waiting')}</span>
+					<span style={{ 'font-size': '11px', opacity: 0.6 }}>{waiting().length}</span>
+				</div>
+				<Show
+					when={waiting().length > 0}
+					fallback={
+						<span style={{ 'font-size': '11px', opacity: 0.65 }}>{ctx.t('info.waiting.none')}</span>
+					}
+				>
+					<For each={waiting()}>{(item) => <WaitingRow item={item} />}</For>
+				</Show>
+				<span style={{ 'font-size': '10px', opacity: 0.55 }}>{ctx.t('info.waiting.hint')}</span>
+			</div>
 		</div>
 	)
 }

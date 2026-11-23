@@ -1,77 +1,19 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
-import { For, Show, createSignal } from 'solid-js'
-import { usePlugin } from '@opencode/plugin/gui'
+import { For, Show, createEffect, createSignal } from 'solid-js'
 import type { MountedSession } from '@opencode/plugin/gui'
-import type { definition } from './definition'
-import { DashboardRpc } from '../rpc'
-import { createSessionPoll } from './poll'
+import { ensureStoreSynced, readAgents } from './session-store'
 import { tok } from './tokens'
 
 export function AgentsView(props: { session: MountedSession }) {
-	const ctx = usePlugin<typeof definition>()
-	const [agents, setAgents] = createSignal<any[]>([])
-	const [error, setError] = createSignal('')
-	const [loaded, setLoaded] = createSignal(false)
 	const [notice, setNotice] = createSignal('')
-	const [lastOk, setLastOk] = createSignal('')
-	const [failures, setFailures] = createSignal(0)
-	const [refreshing, setRefreshing] = createSignal(false)
 
-	const withTimeout = async <T,>(promise: Promise<T>, ms: number): Promise<T> => {
-		let timer: ReturnType<typeof setTimeout> | undefined
-		try {
-			return await Promise.race([
-				promise,
-				new Promise<T>((_, reject) => {
-					timer = setTimeout(() => reject(new Error(`Request timed out after ${ms}ms`)), ms)
-				}),
-			])
-		} finally {
-			if (timer) clearTimeout(timer)
-		}
-	}
-
-	const refreshNow = async (
-		sessionID: string,
-		disposed: () => boolean,
-	): Promise<'ok' | 'error' | 'skipped'> => {
-		if (disposed() || refreshing()) return 'skipped'
-		setRefreshing(true)
-		try {
-			const result = (await withTimeout(
-				ctx.client.rpc(DashboardRpc).agents({ sessionID }),
-				8000,
-			)) as any
-			if (disposed()) return 'skipped'
-			setAgents(Array.isArray(result?.agents) ? result.agents : [])
-			setError('')
-			setFailures(0)
-			setLastOk(new Date().toISOString())
-			return 'ok'
-		} catch (err) {
-			if (disposed()) return 'skipped'
-			setFailures((n) => n + 1)
-			setError(err instanceof Error ? err.message : String(err))
-			return 'error'
-		} finally {
-			setRefreshing(false)
-			if (!disposed()) setLoaded(true)
-		}
-	}
-
-	createSessionPoll({
-		sessionID: () => props.session.id,
-		reset: () => {
-			setRefreshing(false)
-			setLoaded(false)
-			setAgents([])
-			setError('')
-			setFailures(0)
-			setLastOk('')
-		},
-		intervalMs: () => Number((ctx.stores.prefs.value as any).pollMs) || 5000,
-		tick: (sessionID, disposed) => refreshNow(sessionID, disposed),
+	createEffect(() => {
+		ensureStoreSynced(props.session)
 	})
+
+	const list = () => {
+		ensureStoreSynced(props.session)
+		return readAgents(props.session)
+	}
 
 	const copy = async (text: string, label: string) => {
 		if (!text) return
@@ -85,6 +27,12 @@ export function AgentsView(props: { session: MountedSession }) {
 		setTimeout(() => setNotice(''), 1500)
 	}
 
+	const refresh = () => {
+		const data = props.session.server?.data
+		const location = props.session.location
+		if (data && location) void data.location.agent.sync(location).catch(() => {})
+	}
+
 	return (
 		<div style={{ display: 'flex', 'flex-direction': 'column', gap: '8px' }}>
 			<div
@@ -96,21 +44,14 @@ export function AgentsView(props: { session: MountedSession }) {
 					'flex-wrap': 'wrap',
 				}}
 			>
-				<div style={{ 'font-size': '11px', opacity: 0.6 }}>
-					{lastOk()
-						? `Updated ${new Date(lastOk()).toLocaleTimeString()}${failures() > 0 ? ' · backoff' : ''}`
-						: loaded()
-							? 'No successful update yet'
-							: 'Loading…'}
-				</div>
+				<div style={{ 'font-size': '11px', opacity: 0.6 }}>Live from session store</div>
 				<button
 					type="button"
 					class="oh-my-gui-btn"
-					disabled={refreshing()}
-					onClick={() => void refreshNow(props.session.id, () => false)}
+					onClick={refresh}
 					style={{ 'font-size': '11px', padding: '2px 8px' }}
 				>
-					{refreshing() ? 'Refreshing…' : 'Refresh'}
+					Refresh
 				</button>
 			</div>
 			<Show when={notice()}>
@@ -119,20 +60,14 @@ export function AgentsView(props: { session: MountedSession }) {
 				</div>
 			</Show>
 			<Show
-				when={loaded()}
+				when={list() !== undefined}
 				fallback={
 					<div role="status" aria-live="polite">
 						Loading agents...
 					</div>
 				}
 			>
-				<Show when={error()}>
-					<div role="alert" style={{ color: tok.error, 'font-size': '12px' }}>
-						Unavailable: {error()}
-						{failures() > 1 ? ` (attempt ${failures()})` : ''} · retrying
-					</div>
-				</Show>
-				<For each={agents()}>
+				<For each={list() ?? []}>
 					{(a) => {
 						const model = [a.providerID, a.modelID].filter(Boolean).join(' / ') || '—'
 						const tools = Array.isArray(a.tools) ? a.tools : []
@@ -200,7 +135,7 @@ export function AgentsView(props: { session: MountedSession }) {
 									</div>
 								</Show>
 								<div style={{ 'font-size': '11px', opacity: 0.7 }}>
-									<b>Tools:</b>{' '}
+									<b>Permissions:</b>{' '}
 									{tools.length > 0
 										? `${tools.length} — ${tools.slice(0, 8).join(', ')}${tools.length > 8 ? '…' : ''}`
 										: '—'}
@@ -209,7 +144,7 @@ export function AgentsView(props: { session: MountedSession }) {
 						)
 					}}
 				</For>
-				<Show when={agents().length === 0 && !error()}>
+				<Show when={(list() ?? []).length === 0}>
 					<div style={{ opacity: 0.7 }}>No agents reported.</div>
 				</Show>
 			</Show>

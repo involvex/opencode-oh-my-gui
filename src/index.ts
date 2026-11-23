@@ -41,8 +41,6 @@ const sessionAgent = new Map<string, string>()
 const sessionModel = new Map<string, { modelID: string; providerID: string }>()
 const sessionDir = new Map<string, string>()
 const contextRows = new Map<string, ContextRow>()
-const gitCache = new Map<string, { branch: string; dirty: boolean; at: number }>()
-const GIT_TTL_MS = 5000
 
 function now() {
 	return new Date().toISOString()
@@ -76,48 +74,6 @@ function summarize(value: unknown, max = 180) {
 function pushHook(entry: HookEntry) {
 	hookLog.unshift(entry)
 	if (hookLog.length > maxHooks) hookLog.length = maxHooks
-}
-
-const gitInflight = new Map<string, Promise<{ branch: string; dirty: boolean; at: number }>>()
-
-async function readGit(dir: string) {
-	if (!dir) return { branch: '', dirty: false }
-	const cached = gitCache.get(dir)
-	if (cached && Date.now() - cached.at < GIT_TTL_MS) return cached
-	const inflight = gitInflight.get(dir)
-	if (inflight) return inflight
-	const task = (async () => {
-		const run = async (args: string[]) => {
-			try {
-				const proc = Bun.spawn(args, {
-					cwd: dir,
-					stdout: 'pipe',
-					stderr: 'pipe',
-					stdin: 'ignore',
-					windowsHide: true,
-				})
-				const out = await new Response(proc.stdout).text()
-				const err = await new Response(proc.stderr).text().catch(() => '')
-				await proc.exited.catch(() => {})
-				// ignore expected non-repo errors; just return empty
-				if (err && !out) return ''
-				return out.trim()
-			} catch {
-				return ''
-			}
-		}
-		const branch = await run(['git', 'rev-parse', '--abbrev-ref', 'HEAD'])
-		const status = branch ? await run(['git', 'status', '--porcelain']) : ''
-		const result = { branch, dirty: !!status, at: Date.now() }
-		gitCache.set(dir, result)
-		return result
-	})()
-	gitInflight.set(dir, task)
-	try {
-		return await task
-	} finally {
-		gitInflight.delete(dir)
-	}
 }
 
 function logErr(label: string, err: unknown) {
@@ -767,18 +723,12 @@ export default Plugin.define({
 				if (!ctx?.rpc || typeof ctx.rpc.register !== 'function') return
 				const reg = await ctx.rpc.register(DashboardRpc, {
 					overview: async (input: any) => {
+						// Kept for older GUI builds; Desktop 0.7+ reads overview from the session store.
 						const sid = String(input?.sessionID ?? '')
 						const m = sessionModel.get(sid)
 						const row = contextRows.get(sid)
 						const dir = sessionDir.get(sid) ?? String((ctx as any)?.location?.directory ?? '')
 						if (sid && dir) sessionDir.set(sid, dir)
-						let gitBranch = ''
-						try {
-							const git = await readGit(dir)
-							gitBranch = git.branch ? (git.dirty ? `${git.branch}*` : git.branch) : ''
-						} catch {
-							/* ignore */
-						}
 						let mcp: string[] = []
 						try {
 							const mc = (ctx as any)?.mcp
@@ -792,21 +742,6 @@ export default Plugin.define({
 						} catch {
 							/* ignore */
 						}
-						let todos = 0
-						try {
-							const sc = (ctx as any)?.session
-							if (sc && typeof sc.todo === 'function') {
-								const res = await sc.todo({ sessionID: sid })
-								const list = Array.isArray(res) ? res : (res?.data ?? res?.todos ?? [])
-								todos = Array.isArray(list) ? list.length : 0
-							} else if (sc && typeof sc.todos === 'function') {
-								const res = await sc.todos({ sessionID: sid })
-								const list = Array.isArray(res) ? res : (res?.data ?? res?.todos ?? [])
-								todos = Array.isArray(list) ? list.length : 0
-							}
-						} catch {
-							/* ignore */
-						}
 						return {
 							sessionID: sid,
 							data: {
@@ -816,9 +751,9 @@ export default Plugin.define({
 								modelID: m?.modelID ?? row?.modelID ?? '',
 								providerID: m?.providerID ?? '',
 								directory: dir,
-								gitBranch,
+								gitBranch: '',
 								mcp,
-								todos,
+								todos: 0,
 								updatedAt: row?.updatedAt ?? now(),
 							},
 						}

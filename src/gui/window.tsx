@@ -20,7 +20,7 @@ import { DashboardRpc } from '../rpc'
 import { ContextView } from './context'
 import { AgentsView } from './agents'
 import { HooksView } from './hooks'
-import { InfoView } from './info'
+import { InfoView, setWaitingFocusAt } from './info'
 import { JobsView } from './jobs'
 import { sendCommit, useCommitChanges } from './commit'
 import { normalizeShellCode, runInTerminal } from './run-shell'
@@ -32,6 +32,14 @@ import {
 	runningJobCount,
 	type JobRow,
 } from './jobs-model'
+import {
+	buildStoreDiagnostics,
+	ensureStoreSynced,
+	forgetStoreSync,
+	readWaiting,
+	subscribeGoal,
+	waitingCount,
+} from './session-store'
 import ohMyGuiTheme from './themes/oh-my-gui.json'
 import ohMyGuiDawnTheme from './themes/oh-my-gui-dawn.json'
 import { tok } from './tokens'
@@ -207,7 +215,8 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 	ctx.add(Command, (): CommandType => ({
 		id: 'copy-diagnostics',
 		title: 'Copy Oh My GUI diagnostics bundle',
-		description: 'Copy sanitized overview, context, and recent hooks for bug reports',
+		description:
+			'Copy sanitized store snapshot, context estimate, and recent hooks for bug reports',
 		keywords: 'oh my gui diagnostics report export logs copy',
 		section: 'terminal' as const,
 		enabled: !!ctx.sessions.current(),
@@ -215,16 +224,27 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 			const session = ctx.sessions.current()
 			if (!session) return
 			try {
+				ensureStoreSynced(session)
 				const client = ctx.client.rpc(DashboardRpc)
-				const [ov, ctxRes, hk] = await Promise.all([
-					client.overview({ sessionID: session.id }).catch(() => null),
+				const [ctxRes, hk, goal] = await Promise.all([
 					client.context({ sessionID: session.id }).catch(() => null),
 					client.hooks({ sessionID: session.id, limit: 50 }).catch(() => null),
+					new Promise<unknown>((resolve) => {
+						const stop = subscribeGoal(ctx.client as any, session.id, (g) => {
+							stop()
+							resolve(g)
+						})
+						setTimeout(() => {
+							stop()
+							resolve(null)
+						}, 1500)
+					}),
 				])
+				const store = buildStoreDiagnostics(session, (goal as any) ?? null)
 				const bundle = {
 					generatedAt: new Date().toISOString(),
 					sessionID: session.id,
-					overview: (ov as any)?.data ?? null,
+					...store,
 					context: (ctxRes as any)?.rows ?? [],
 					hooks: (hk as any)?.entries ?? [],
 				}
@@ -477,6 +497,69 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 				tone: 'warning' as const,
 				title: ctx.t('pill.jobs.title'),
 				run: () => open(session as any, 'jobs'),
+			}
+		},
+	}))
+
+	const seenWaiting = new Map<string, Set<string>>()
+
+	createEffect(() => {
+		const notify = (ctx.stores.prefs.value as any).notifyWaiting !== false
+		const refs = ctx.sessions.list()
+
+		for (const ref of refs) {
+			ensureStoreSynced(ref)
+			const items = readWaiting(ref)
+			const ids = new Set(items.map((i) => i.id))
+			const prev = seenWaiting.get(ref.key)
+			if (!prev) {
+				seenWaiting.set(ref.key, ids)
+				continue
+			}
+			if (notify) {
+				for (const item of items) {
+					if (prev.has(item.id)) continue
+					void ctx.attention.notify({
+						title: ctx.t('toast.waiting'),
+						message: ctx.t('toast.waiting.message', {
+							label: `${item.kind}: ${item.title}`,
+						}),
+						session: { server: ref.server.id, id: ref.id },
+						id: `${ctx.id}:waiting:${item.id}`,
+					})
+				}
+			}
+			seenWaiting.set(ref.key, ids)
+		}
+
+		const openKeys = new Set(refs.map((r) => r.key))
+		for (const key of [...seenWaiting.keys()]) {
+			if (!openKeys.has(key)) {
+				seenWaiting.delete(key)
+				forgetStoreSync(key)
+			}
+		}
+	})
+
+	ctx.add(ComposerPill, () => ({
+		id: 'waiting',
+		order: 3,
+		show: ({ session }) => {
+			const prefs = ctx.stores.prefs.value as any
+			if (prefs.showWaiting === false) return undefined
+			const mounted = session as MountedSession
+			ensureStoreSynced(mounted)
+			const count = waitingCount(mounted)
+			if (count <= 0) return undefined
+			return {
+				label: `${count} ${ctx.t('pill.waiting')}`,
+				icon: 'circle-exclamation',
+				tone: 'warning' as const,
+				title: ctx.t('pill.waiting.title'),
+				run: () => {
+					setWaitingFocusAt(Date.now())
+					open(session as any, 'info')
+				},
 			}
 		},
 	}))
@@ -845,6 +928,30 @@ function SettingsView(props: { target?: string; ui: any }) {
 						hideLabel
 						checked={p.value.notifyJobs !== false}
 						onChange={(v: boolean) => setPref({ notifyJobs: v })}
+					/>
+				</ui.SettingsRow>
+				<ui.SettingsRow
+					id="show-waiting"
+					title={ctx.t('settings.showWaiting')}
+					description={ctx.t('settings.showWaiting.description')}
+				>
+					<ui.Switch
+						label={ctx.t('settings.showWaiting')}
+						hideLabel
+						checked={p.value.showWaiting !== false}
+						onChange={(v: boolean) => setPref({ showWaiting: v })}
+					/>
+				</ui.SettingsRow>
+				<ui.SettingsRow
+					id="notify-waiting"
+					title={ctx.t('settings.notifyWaiting')}
+					description={ctx.t('settings.notifyWaiting.description')}
+				>
+					<ui.Switch
+						label={ctx.t('settings.notifyWaiting')}
+						hideLabel
+						checked={p.value.notifyWaiting !== false}
+						onChange={(v: boolean) => setPref({ notifyWaiting: v })}
 					/>
 				</ui.SettingsRow>
 				<ui.SettingsRow id="commit-confirm" title={ctx.t('settings.commitConfirm')}>
