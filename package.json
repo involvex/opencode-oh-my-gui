@@ -1,7 +1,7 @@
 {
 	"name": "@involvex/oh-my-gui",
-	"version": "0.7.0",
-	"description": "OpenCode Desktop GUI: live session store dashboard, provider allowance, waiting pill, background jobs, themes, shell Run",
+	"version": "0.8.0",
+	"description": "OpenCode Desktop GUI: live session store dashboard, workspace Stats, provider allowance, waiting pill, background jobs, themes",
 	"keywords": [
 		"opencode",
 		"opencode-plugin",

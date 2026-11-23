@@ -58,6 +58,7 @@ bun run unregister
 | Context warning | Toast once per session when usage crosses the threshold (default 80%)     |
 | Jobs            | Jobs tab + pill for shell, subagent, image, and codemode; optional notify |
 | Waiting         | Pill + Info list for permissions, forms, and stranded/queued prompts      |
+| Stats           | Workspace stats from `session.stats` (range, models, tools, activity)     |
 | Commit pill     | Appears when the repo has uncommitted changes                             |
 | Goal            | Info tab shows the session goal from `opencode.goal` when present         |
 | Hook quote      | Attach a hook detail as a composer quote                                  |
@@ -241,6 +242,10 @@ Info and Agents read the Desktop session store instead of polling the server ove
 The Context tab shows a **Provider allowance** card when `location.usage.limits` reports OpenCode Go meters or Console budgets. The card stays hidden when the workspace has no limits.
 
 A **Waiting** composer pill appears for pending permissions, open forms, and inbox items whose pending status is `queued` or `stranded`. Opening it focuses the Info tab waiting list. Optional notifications use a separate `notifyWaiting` preference (on by default). Diagnostics copy includes the store snapshot (overview, agents, allowance, waiting, goal) plus the estimate and hooks.
+
+## Workspace stats (0.8)
+
+The **Stats** tab calls `session.stats` (falling back to `experimental.session.stats`) with a Today / 7 days / 30 days range and `tools: "detail"`. It shows session/prompt/step counts, cost, token totals, active days and streak, per-model cost, tool totals and per-tool rows, and a short activity strip. The range preference is remembered. Stats are workspace-scoped (optionally filtered by the session's project when known), not a per-session store read. The tab shows an unavailable empty state when the endpoint is missing.
 
 ## Resources
 

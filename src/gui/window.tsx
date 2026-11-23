@@ -22,6 +22,7 @@ import { AgentsView } from './agents'
 import { HooksView } from './hooks'
 import { InfoView, setWaitingFocusAt } from './info'
 import { JobsView } from './jobs'
+import { StatsView } from './stats'
 import { sendCommit, useCommitChanges } from './commit'
 import { normalizeShellCode, runInTerminal } from './run-shell'
 import { formatTokens, readCompaction, readSessionUsage } from './usage'
@@ -50,7 +51,7 @@ const ICON = 'window-analytics'
 const TITLE = 'Oh My GUI'
 
 const TAB: PanelTab = { id: PANEL_ID, title: TITLE, closable: 'compact', fallback: true }
-type DashTab = 'context' | 'agents' | 'hooks' | 'info' | 'jobs'
+type DashTab = 'context' | 'agents' | 'hooks' | 'info' | 'jobs' | 'stats'
 const [requestedTab, setRequestedTab] = createSignal<DashTab | null>(null)
 
 const FOCUS_STYLE_ID = 'oh-my-gui-focus-style'
@@ -172,7 +173,7 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 		id: PANEL_ID,
 		title: TITLE,
 		icon: ICON,
-		description: 'Agents, context, hooks, jobs & info',
+		description: 'Agents, context, hooks, jobs, stats & info',
 		opened: !!ctx.sessions.current() && ctx.layout.state(key, ctx.sessions.current()!) !== 'closed',
 		run: () => open(),
 	}))
@@ -198,7 +199,8 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 		{ id: 'agents', title: 'Open Oh My GUI: Agents', keywords: 'agents models tools' },
 		{ id: 'hooks', title: 'Open Oh My GUI: Hooks', keywords: 'hooks events tools log errors' },
 		{ id: 'jobs', title: 'Open Oh My GUI: Jobs', keywords: 'background jobs shell subagent' },
-		{ id: 'info', title: 'Open Oh My GUI: Info', keywords: 'session info git mcp todos' },
+		{ id: 'stats', title: 'Open Oh My GUI: Stats', keywords: 'stats usage cost streak tools models' },
+		{ id: 'info', title: 'Open Oh My GUI: Info', keywords: 'session info git mcp goal waiting' },
 	]
 	for (const cmd of tabCommands) {
 		ctx.add(Command, (): CommandType => ({
@@ -581,6 +583,7 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 				{ id: 'agents', title: 'Agents section', keywords: 'agents tabs' },
 				{ id: 'hooks', title: 'Hooks section', keywords: 'hooks events' },
 				{ id: 'jobs', title: 'Jobs section', keywords: 'jobs background notify' },
+				{ id: 'stats', title: 'Stats section', keywords: 'stats cost streak tools' },
 				{ id: 'pill', title: ctx.t('settings.pill'), keywords: 'commit pill jobs' },
 				{ id: 'layout', title: ctx.t('settings.section.layout'), keywords: 'width panel' },
 			]
@@ -600,6 +603,7 @@ function PanelShell(props: { session: MountedSession }) {
 		if (id === 'agents') return p.showAgents !== false
 		if (id === 'hooks') return p.showHooks !== false
 		if (id === 'jobs') return p.showJobs !== false
+		if (id === 'stats') return p.showStats !== false
 		return p.showInfo !== false
 	}
 
@@ -612,12 +616,15 @@ function PanelShell(props: { session: MountedSession }) {
 
 	createEffect(() => {
 		if (!visible(tab())) {
-			const first = (['context', 'agents', 'hooks', 'jobs', 'info'] as DashTab[]).find(visible)
+			const first = (['context', 'agents', 'hooks', 'jobs', 'stats', 'info'] as DashTab[]).find(
+				visible,
+			)
 			if (first) setTab(first)
 		}
 	})
 
-	const tabIds = () => (['context', 'agents', 'hooks', 'jobs', 'info'] as DashTab[]).filter(visible)
+	const tabIds = () =>
+		(['context', 'agents', 'hooks', 'jobs', 'stats', 'info'] as DashTab[]).filter(visible)
 	const onTabKeyDown = (e: KeyboardEvent) => {
 		const ids = tabIds()
 		if (ids.length === 0) return
@@ -698,6 +705,9 @@ function PanelShell(props: { session: MountedSession }) {
 				<Show when={visible('jobs')}>
 					<TabButton id="jobs" label={ctx.t('tab.jobs')} />
 				</Show>
+				<Show when={visible('stats')}>
+					<TabButton id="stats" label={ctx.t('tab.stats')} />
+				</Show>
 				<Show when={visible('info')}>
 					<TabButton id="info" label={ctx.t('tab.info')} />
 				</Show>
@@ -721,6 +731,11 @@ function PanelShell(props: { session: MountedSession }) {
 				<Show when={tab() === 'jobs' && visible('jobs')}>
 					<div id="oh-my-gui-panel-jobs" role="tabpanel">
 						<JobsView session={props.session} />
+					</div>
+				</Show>
+				<Show when={tab() === 'stats' && visible('stats')}>
+					<div id="oh-my-gui-panel-stats" role="tabpanel">
+						<StatsView session={props.session} />
 					</div>
 				</Show>
 				<Show when={tab() === 'info' && visible('info')}>
@@ -853,6 +868,14 @@ function SettingsView(props: { target?: string; ui: any }) {
 						hideLabel
 						checked={p.value.showJobs !== false}
 						onChange={(v: boolean) => setPref({ showJobs: v })}
+					/>
+				</ui.SettingsRow>
+				<ui.SettingsRow id="stats" title={ctx.t('settings.showStats')}>
+					<ui.Switch
+						label={ctx.t('settings.showStats')}
+						hideLabel
+						checked={p.value.showStats !== false}
+						onChange={(v: boolean) => setPref({ showStats: v })}
 					/>
 				</ui.SettingsRow>
 				<ui.SettingsRow id="info" title={ctx.t('settings.showInfo')}>
