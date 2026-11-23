@@ -199,7 +199,11 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 		{ id: 'agents', title: 'Open Oh My GUI: Agents', keywords: 'agents models tools' },
 		{ id: 'hooks', title: 'Open Oh My GUI: Hooks', keywords: 'hooks events tools log errors' },
 		{ id: 'jobs', title: 'Open Oh My GUI: Jobs', keywords: 'background jobs shell subagent' },
-		{ id: 'stats', title: 'Open Oh My GUI: Stats', keywords: 'stats usage cost streak tools models' },
+		{
+			id: 'stats',
+			title: 'Open Oh My GUI: Stats',
+			keywords: 'stats usage cost streak tools models',
+		},
 		{ id: 'info', title: 'Open Oh My GUI: Info', keywords: 'session info git mcp goal waiting' },
 	]
 	for (const cmd of tabCommands) {

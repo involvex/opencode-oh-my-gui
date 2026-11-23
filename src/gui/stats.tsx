@@ -32,9 +32,7 @@ const RANGES: { id: StatsRangeId; labelKey: string }[] = [
 export function StatsView(props: { session: MountedSession }) {
 	const ctx = usePlugin<typeof definition>()
 	const prefs = () => ctx.stores.prefs.value as any
-	const [range, setRange] = createSignal<StatsRangeId>(
-		(prefs().statsRange as StatsRangeId) || '7d',
-	)
+	const [range, setRange] = createSignal<StatsRangeId>((prefs().statsRange as StatsRangeId) || '7d')
 	const [data, setData] = createSignal<StatsSnapshot | null>(null)
 	const [supported, setSupported] = createSignal(true)
 	const [error, setError] = createSignal('')
@@ -103,7 +101,11 @@ export function StatsView(props: { session: MountedSession }) {
 					'flex-wrap': 'wrap',
 				}}
 			>
-				<div style={{ display: 'flex', gap: '4px', 'flex-wrap': 'wrap' }} role="group" aria-label={ctx.t('stats.range')}>
+				<div
+					style={{ display: 'flex', gap: '4px', 'flex-wrap': 'wrap' }}
+					role="group"
+					aria-label={ctx.t('stats.range')}
+				>
 					<For each={RANGES}>
 						{(r) => (
 							<button
@@ -159,7 +161,9 @@ export function StatsView(props: { session: MountedSession }) {
 					{(s) => (
 						<>
 							<div style={CARD}>
-								<span style={{ 'font-size': '12px', 'font-weight': '500' }}>{ctx.t('stats.summary')}</span>
+								<span style={{ 'font-size': '12px', 'font-weight': '500' }}>
+									{ctx.t('stats.summary')}
+								</span>
 								<div style={{ display: 'flex', gap: '12px', 'flex-wrap': 'wrap' }}>
 									<Metric label={ctx.t('stats.sessions')} value={String(s().sessions)} />
 									<Metric label={ctx.t('stats.subagents')} value={String(s().subagents)} />
@@ -172,8 +176,12 @@ export function StatsView(props: { session: MountedSession }) {
 							</div>
 
 							<div style={CARD}>
-								<span style={{ 'font-size': '12px', 'font-weight': '500' }}>{ctx.t('stats.tokens')}</span>
-								<div style={{ display: 'flex', gap: '12px', 'flex-wrap': 'wrap', 'font-size': '11px' }}>
+								<span style={{ 'font-size': '12px', 'font-weight': '500' }}>
+									{ctx.t('stats.tokens')}
+								</span>
+								<div
+									style={{ display: 'flex', gap: '12px', 'flex-wrap': 'wrap', 'font-size': '11px' }}
+								>
 									<span>
 										{ctx.t('stats.tokens.total')}: {formatTokens(tokenTotal(s().tokens))}
 									</span>
@@ -189,7 +197,9 @@ export function StatsView(props: { session: MountedSession }) {
 
 							<Show when={s().models.length > 0}>
 								<div style={CARD}>
-									<span style={{ 'font-size': '12px', 'font-weight': '500' }}>{ctx.t('stats.models')}</span>
+									<span style={{ 'font-size': '12px', 'font-weight': '500' }}>
+										{ctx.t('stats.models')}
+									</span>
 									<For each={s().models}>
 										{(m) => (
 											<div
@@ -201,11 +211,10 @@ export function StatsView(props: { session: MountedSession }) {
 													'flex-wrap': 'wrap',
 												}}
 											>
-												<span>
-													{[m.providerID, m.modelID].filter(Boolean).join(' / ') || '—'}
-												</span>
+												<span>{[m.providerID, m.modelID].filter(Boolean).join(' / ') || '—'}</span>
 												<span style={{ opacity: 0.75 }}>
-													{m.steps} steps · {formatCost(m.cost)} · {formatTokens(tokenTotal(m.tokens))}
+													{m.steps} steps · {formatCost(m.cost)} ·{' '}
+													{formatTokens(tokenTotal(m.tokens))}
 												</span>
 											</div>
 										)}
@@ -215,7 +224,9 @@ export function StatsView(props: { session: MountedSession }) {
 
 							<Show when={s().toolTotals || s().toolUsage.length > 0}>
 								<div style={CARD}>
-									<span style={{ 'font-size': '12px', 'font-weight': '500' }}>{ctx.t('stats.tools')}</span>
+									<span style={{ 'font-size': '12px', 'font-weight': '500' }}>
+										{ctx.t('stats.tools')}
+									</span>
 									<Show when={s().toolTotals}>
 										{(t) => (
 											<div style={{ 'font-size': '11px', opacity: 0.8 }}>
@@ -247,8 +258,17 @@ export function StatsView(props: { session: MountedSession }) {
 
 							<Show when={s().activity.length > 0}>
 								<div style={CARD}>
-									<span style={{ 'font-size': '12px', 'font-weight': '500' }}>{ctx.t('stats.activity')}</span>
-									<div style={{ display: 'flex', 'align-items': 'flex-end', gap: '3px', height: '48px' }}>
+									<span style={{ 'font-size': '12px', 'font-weight': '500' }}>
+										{ctx.t('stats.activity')}
+									</span>
+									<div
+										style={{
+											display: 'flex',
+											'align-items': 'flex-end',
+											gap: '3px',
+											height: '48px',
+										}}
+									>
 										<For each={s().activity.slice(-14)}>
 											{(a) => {
 												const max = Math.max(1, ...s().activity.map((x) => x.steps))
