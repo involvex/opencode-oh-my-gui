@@ -45,6 +45,7 @@ import ohMyGuiTheme from './themes/oh-my-gui.json'
 import ohMyGuiDawnTheme from './themes/oh-my-gui-dawn.json'
 import ohMyGuiHackerTheme from './themes/oh-my-gui-hacker.json'
 import ohMyGuiHackerAmoledTheme from './themes/oh-my-gui-hacker-amoled.json'
+import { MenuBridge } from './contract'
 import { tok } from './tokens'
 
 const PANEL_ID = 'main'
@@ -77,6 +78,16 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 	ensureFocusStyles()
 	const key = `${ctx.id}:${PANEL_ID}`
 	const ui = ctx.ui
+
+	if (ctx.app.platform === 'desktop') {
+		const menu = ctx.main(MenuBridge)
+		void menu.ready({ signal: ctx.signal }).catch(() => {
+			/* main not ready yet; event listener still attaches */
+		})
+		menu.on('action', ({ command }) => {
+			void ctx.commands.run(`${ctx.id}:${command}`)
+		})
+	}
 
 	ctx.add(Theme, ohMyGuiTheme)
 	ctx.add(Theme, ohMyGuiDawnTheme)

@@ -47,7 +47,8 @@ bun run unregister
 
 | Feature         | How                                                                          |
 | --------------- | ---------------------------------------------------------------------------- |
-| Side panel      | Session panel menu, `Ctrl+\``, or `/omg`                                     |
+| Side panel      | Session panel menu, `Ctrl+\``, `/omg`, or **View → Toggle Oh My GUI**        |
+| App menu        | View: panel + tabs; Help: Copy Oh My GUI Diagnostics                         |
 | Auto-open       | On by default for new session tabs; toggle in Settings → Oh My GUI           |
 | Panel width     | Defaults to 380px; drag the divider (remembered per panel)                   |
 | Themes          | **Oh My GUI**, **Dawn**, **Hacker**, **Hacker AMOLED** in Appearance → Theme |
