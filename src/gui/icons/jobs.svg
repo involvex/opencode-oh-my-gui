@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none">
+	<path
+		d="M6.2 2.8h3.6l.7 1.4h2.3v2.2l-1.2.7.2 1.7 1 1.1v2.3H9.8l-.7 1.4H6.9l-.7-1.4H3.2v-2.3l1-1.1.2-1.7-1.2-.7V4.2h2.3l.7-1.4Z"
+		stroke="currentColor"
+		stroke-width="1.1"
+		stroke-linejoin="round"
+	>
+		<animateTransform attributeName="transform" type="rotate" from="0 8 8" to="360 8 8" dur="2.8s" repeatCount="indefinite" />
+	</path>
+	<circle cx="8" cy="8" r="1.6" fill="currentColor" />
+</svg>

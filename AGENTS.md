@@ -48,7 +48,7 @@ dist/gui-experimental.cjs
 
 ## Current work
 
-Shipped docs showcase + **0.9.1** (themes, menubar, README/SHARE). Paste `SHARE.md` on Discord when ready.
+Shipped **0.10.0**: header status `Slot`, `TitlebarItem` toggle, animated status icons.
 
 ## Learned preferences
 
@@ -57,7 +57,7 @@ Shipped docs showcase + **0.9.1** (themes, menubar, README/SHARE). Paste `SHARE.
 ## Learned workspace facts
 
 - Repo: https://github.com/involvex/opencode-oh-my-gui
-- Package: `@involvex/oh-my-gui` (npm 0.9.1+)
+- Package: `@involvex/oh-my-gui` (npm 0.10.0+)
 
 ## Plugin Architecture (V2)
 

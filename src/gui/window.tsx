@@ -6,12 +6,15 @@ import {
 	MenuItem,
 	Panel,
 	SettingsPage,
+	Slot,
 	Theme,
+	TitlebarItem,
 	usePlugin,
 	type PanelTab,
 	type MountedSession,
 	type Command as CommandType,
 	type MenuItem as MenuItemType,
+	type TitlebarItem as TitlebarItemType,
 } from '@opencode/plugin/gui'
 import { Show, createEffect, createSignal } from 'solid-js'
 import type { Plugin } from '@opencode/plugin/gui'
@@ -23,6 +26,7 @@ import { HooksView } from './hooks'
 import { InfoView, setWaitingFocusAt } from './info'
 import { JobsView } from './jobs'
 import { StatsView } from './stats'
+import { StatusChip } from './status-chip'
 import { sendCommit, useCommitChanges } from './commit'
 import { normalizeShellCode, runInTerminal } from './run-shell'
 import { formatTokens, readCompaction, readSessionUsage } from './usage'
@@ -50,7 +54,6 @@ import { tok } from './tokens'
 
 const PANEL_ID = 'main'
 const PANEL_WIDTH = 380
-const ICON = 'window-analytics'
 const TITLE = 'Oh My GUI'
 
 const TAB: PanelTab = { id: PANEL_ID, title: TITLE, closable: 'compact', fallback: true }
@@ -78,6 +81,7 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 	ensureFocusStyles()
 	const key = `${ctx.id}:${PANEL_ID}`
 	const ui = ctx.ui
+	const panelIcon = ctx.icons.panel
 
 	if (ctx.app.platform === 'desktop') {
 		const menu = ctx.main(MenuBridge)
@@ -180,14 +184,14 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 		wide: true,
 		list: (input) => (input.open.includes(PANEL_ID) ? [TAB] : []),
 		render: (props) => <PanelShell session={props.session} />,
-		mobile: { title: TITLE, order: 1, kind: 'tab', icon: ICON },
+		mobile: { title: TITLE, order: 1, kind: 'tab', icon: panelIcon },
 	})
 
 	ctx.add(MenuItem, (): MenuItemType => ({
 		menu: 'session.panel' as const,
 		id: PANEL_ID,
 		title: TITLE,
-		icon: ICON,
+		icon: panelIcon,
 		description: 'Agents, context, hooks, jobs, stats & info',
 		opened: !!ctx.sessions.current() && ctx.layout.state(key, ctx.sessions.current()!) !== 'closed',
 		run: () => open(),
@@ -204,6 +208,20 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 		enabled: !!ctx.sessions.current(),
 		run: () => toggle(),
 	}))
+
+	ctx.add(TitlebarItem, (): TitlebarItemType | undefined => {
+		const session = ctx.sessions.current()
+		if (!session) return undefined
+		const opened = ctx.layout.state(key, session) !== 'closed'
+		return {
+			id: 'toggle',
+			label: ctx.t('titlebar.toggle'),
+			title: ctx.t('titlebar.toggle.title'),
+			icon: panelIcon,
+			pressed: opened,
+			run: () => toggle(session),
+		}
+	})
 
 	const tabCommands: Array<{ id: DashTab; title: string; keywords: string }> = [
 		{
@@ -327,7 +345,7 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 				const reason = compaction.reason === 'manual' ? 'manual' : 'auto'
 				return {
 					label: ctx.t('pill.context.compacting'),
-					icon: ICON,
+					icon: ctx.icons.compacting,
 					tone: 'warning' as const,
 					title: ctx.t('pill.context.compacting.title', { reason }),
 					run: () => open(session as any, 'context'),
@@ -340,7 +358,7 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 				const share = usage.share
 				return {
 					label: `${share.toFixed(0)}% ctx`,
-					icon: ICON,
+					icon: panelIcon,
 					tone: share >= 90 ? ('danger' as const) : share >= 70 ? ('warning' as const) : undefined,
 					title:
 						usage.risk === 'high'
@@ -354,7 +372,7 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 			if (usage.tokens > 0) {
 				return {
 					label: `${formatTokens(usage.tokens)} ctx`,
-					icon: ICON,
+					icon: panelIcon,
 					title: `Context: ${usage.tokens.toLocaleString()} tokens (model limit unknown)`,
 					run: () => open(session as any, 'context'),
 				}
@@ -514,7 +532,7 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 			if (count <= 0) return undefined
 			return {
 				label: `${count} ${ctx.t('pill.jobs')}`,
-				icon: 'task',
+				icon: ctx.icons.jobs,
 				tone: 'warning' as const,
 				title: ctx.t('pill.jobs.title'),
 				run: () => open(session as any, 'jobs'),
@@ -574,7 +592,7 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 			if (count <= 0) return undefined
 			return {
 				label: `${count} ${ctx.t('pill.waiting')}`,
-				icon: 'circle-exclamation',
+				icon: ctx.icons.waiting,
 				tone: 'warning' as const,
 				title: ctx.t('pill.waiting.title'),
 				run: () => {
@@ -585,9 +603,56 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 		},
 	}))
 
+	ctx.add(Slot, {
+		at: 'session.header',
+		order: 20,
+		render: (input) => (
+			<StatusChip
+				session={input.session}
+				active={input.active}
+				listedJobs={() => listedBySession()[input.session.key] ?? []}
+				onOpen={(session, tab) => {
+					if (tab === 'info') setWaitingFocusAt(Date.now())
+					open(session, tab)
+				}}
+			/>
+		),
+	})
+
+	ctx.add(Slot, {
+		at: 'session.panel.end',
+		order: 20,
+		render: (input) => (
+			<button
+				type="button"
+				class="oh-my-gui-btn"
+				data-oh-my-gui
+				title={ctx.t('titlebar.toggle.title')}
+				aria-label={ctx.t('command.toggle')}
+				onClick={() => toggle(input.session)}
+				style={{
+					display: 'inline-flex',
+					'align-items': 'center',
+					'justify-content': 'center',
+					width: '24px',
+					height: '24px',
+					margin: '0',
+					padding: '0',
+					border: 'none',
+					'border-radius': '6px',
+					background: 'transparent',
+					color: tok.muted,
+					cursor: 'pointer',
+				}}
+			>
+				<ui.Icon name={panelIcon} size="small" />
+			</button>
+		),
+	})
+
 	ctx.add(SettingsPage, {
 		id: 'oh-my-gui',
-		icon: ICON,
+		icon: panelIcon,
 		get title() {
 			return ctx.t('settings.title')
 		},

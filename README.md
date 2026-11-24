@@ -47,23 +47,26 @@ Contributions follow the Desktop GUI registries from the [GUI docs](https://open
 
 `Panel` with `region: "side"` (default width 380px; drag the divider to resize).
 
-| Open with                   | Notes                         |
-| --------------------------- | ----------------------------- |
-| Session panel menu          | **Oh My GUI**                 |
-| `Ctrl+\``                   | Toggle                        |
-| `/omg`                      | Slash command                 |
-| **View → Toggle Oh My GUI** | Native menubar (main process) |
+| Open with                   | Notes                                                    |
+| --------------------------- | -------------------------------------------------------- |
+| Session panel menu          | **Oh My GUI**                                            |
+| `Ctrl+\``                   | Toggle                                                   |
+| `/omg`                      | Slash command                                            |
+| **View → Toggle Oh My GUI** | Native menubar (main process)                            |
+| Titlebar pill               | **Oh My GUI** — pressed while the panel is open          |
+| Session header chip         | Compact ctx % / waiting / jobs; click opens matching tab |
+| Panel tab strip end         | Icon button toggles the panel                            |
 
 Tabs: **Context**, **Agents**, **Hooks**, **Jobs**, **Stats**, **Info**. Auto-open on new session tabs is on by default (Settings → Oh My GUI).
 
 ### Composer pills
 
-| Pill    | When                                                                                       |
-| ------- | ------------------------------------------------------------------------------------------ |
-| Context | Live tokens, cost, and window from the session store; shows **Compacting…** during summary |
-| Commit  | Uncommitted changes in the session repo — click sends `/commit`                            |
-| Jobs    | Background shell / subagent / image / codemode work                                        |
-| Waiting | Permissions, forms, or stranded / queued prompts                                           |
+| Pill    | When                                                                                        |
+| ------- | ------------------------------------------------------------------------------------------- |
+| Context | Live tokens, cost, and window from the session store; **Compacting…** uses an animated icon |
+| Commit  | Uncommitted changes in the session repo — click sends `/commit`                             |
+| Jobs    | Background shell / subagent / image / codemode work (animated icon)                         |
+| Waiting | Permissions, forms, or stranded / queued prompts (animated icon)                            |
 
 ### Themes
 

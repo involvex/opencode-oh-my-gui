@@ -1,8 +1,18 @@
 import { Schema } from 'effect'
 import { Plugin, Store } from '@opencode/plugin/gui'
+import panelIcon from './icons/panel.svg?raw'
+import compactingIcon from './icons/compacting.svg?raw'
+import waitingIcon from './icons/waiting.svg?raw'
+import jobsIcon from './icons/jobs.svg?raw'
 
 export const definition = Plugin.define({
 	os: ['windows', 'macos', 'linux'],
+	icons: {
+		panel: panelIcon,
+		compacting: compactingIcon,
+		waiting: waitingIcon,
+		jobs: jobsIcon,
+	},
 	stores: {
 		prefs: Store.global(
 			Schema.Struct({
@@ -53,6 +63,15 @@ export const definition = Plugin.define({
 			'command.toggle': 'Toggle Oh My GUI panel',
 			'command.toggle.slash': 'omg',
 			'menu.toggle': 'Toggle Oh My GUI',
+			'titlebar.toggle': 'Oh My GUI',
+			'titlebar.toggle.title': 'Toggle Oh My GUI panel',
+			'slot.status.title': 'Oh My GUI status',
+			'slot.status.open': 'Open Oh My GUI',
+			'slot.status.ctx': '{pct}%',
+			'slot.status.waiting': '{count} wait',
+			'slot.status.jobs': '{count} job',
+			'slot.status.jobs.plural': '{count} jobs',
+			'slot.status.compacting': 'Compacting…',
 			'menu.open.context': 'Oh My GUI: Context',
 			'menu.open.agents': 'Oh My GUI: Agents',
 			'menu.open.hooks': 'Oh My GUI: Hooks',
