@@ -1,21 +1,63 @@
-# OpenCode Plugin Development (V2)
+# AGENTS.md
 
-This is an OpenCode V2 plugin. OpenCode is an AI-powered coding assistant that runs in the terminal.
-V2 uses the `@opencode/plugin` package with the `Plugin.define({ id, setup(ctx) })` pattern.
+OpenCode V2 plugin: server hooks + Desktop GUI (`./gui-experimental`).
+V2 uses `@opencode/plugin` with `Plugin.define({ id, setup(ctx) })`.
 
-## Documentation
+## Commands
 
-- [Plugin Documentation](https://opencode.ai/v2/docs/build/plugins)
-- [SDK Reference](https://opencode.ai/v2/docs/sdk)
-- [Community Plugins](https://opencode.ai/v2/docs/ecosystem/#plugins)
+- `bun install` — deps
+- `bun run build:gui` / `bun run dev:gui` — Vite GUI bundle → `dist/gui-experimental.cjs`
+- `bun typecheck` — `tsc --noEmit`
+- `bun run verify` — format + lint:fix + check
+- `bun run setup` / `bun run unregister` — global `file:///` plugin registration
+- `bun dev` — OpenCode CLI with server plugin from source
 
-## Project Structure
+## Layout
 
 ```
 src/
-  index.ts    # Plugin entry point - exports Plugin.define
-dev.ts        # Development script - runs OpenCode with this plugin loaded
+  index.ts           # Server plugin (hooks + DashboardRpc)
+  gui.tsx            # Desktop GUI entry (setup + main)
+  gui/
+    definition.ts    # stores, i18n
+    window.tsx       # Panel, pills, themes, settings, commands
+    main.ts          # MenubarItem (View / Help)
+    *.tsx            # tab views
+docs/images/         # README screenshots
+SHARE.md             # Discord community-projects draft (unposted)
+dist/gui-experimental.cjs
 ```
+
+## Documentation
+
+- [GUI plugins](https://opencode.ai/docs/build/plugins/gui/)
+- [Plugins](https://opencode.ai/docs/build/plugins)
+- [SDK](https://opencode.ai/docs/sdk)
+- [Ecosystem](https://opencode.ai/docs/ecosystem/#plugins)
+
+## Conventions
+
+- Public README leads with Desktop GUI surfaces; keep the V2 hook tutorial in this file.
+- Screenshots live under `docs/images/`; crop out private session text.
+
+## Gotchas
+
+- Desktop loads `opencode.json(c)` only (not `cli.json`).
+- GUI must be prebuilt CommonJS via `@opencode/plugin/gui/vite`; import shared modules only.
+- After feature commits on `main`, bump + `npm publish` before Discord/`@latest` posts.
+
+## Current work
+
+Shipped docs showcase + **0.9.0** (themes, menubar, README/SHARE). Paste `SHARE.md` on Discord when ready.
+
+## Learned preferences
+
+- Prefer completing in-flight GUI features before new themes/panels.
+
+## Learned workspace facts
+
+- Repo: https://github.com/involvex/opencode-oh-my-gui
+- Package: `@involvex/oh-my-gui` (npm 0.9.0+)
 
 ## Plugin Architecture (V2)
 
