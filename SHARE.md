@@ -6,7 +6,7 @@
 
 ---
 
-**@involvex/oh-my-gui@0.9.0** — Desktop session dashboard for OpenCode
+**@involvex/oh-my-gui@0.9.1** — Desktop session dashboard for OpenCode
 
 Side panel for Context / Agents / Hooks / Jobs / Stats / Info, composer pills (context, commit, jobs, waiting), four Appearance themes (including **Oh My GUI Hacker** / AMOLED), Run-in-terminal on shell fences, and View / Help menu items. Built with the experimental GUI plugin SDK (`Panel`, `ComposerPill`, `Theme`, `CodeBlockAction`, `SettingsPage`, `MenubarItem`).
 

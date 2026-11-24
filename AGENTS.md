@@ -48,7 +48,7 @@ dist/gui-experimental.cjs
 
 ## Current work
 
-Shipped docs showcase + **0.9.0** (themes, menubar, README/SHARE). Paste `SHARE.md` on Discord when ready.
+Shipped docs showcase + **0.9.1** (themes, menubar, README/SHARE). Paste `SHARE.md` on Discord when ready.
 
 ## Learned preferences
 
@@ -57,7 +57,7 @@ Shipped docs showcase + **0.9.0** (themes, menubar, README/SHARE). Paste `SHARE.
 ## Learned workspace facts
 
 - Repo: https://github.com/involvex/opencode-oh-my-gui
-- Package: `@involvex/oh-my-gui` (npm 0.9.0+)
+- Package: `@involvex/oh-my-gui` (npm 0.9.1+)
 
 ## Plugin Architecture (V2)
 
