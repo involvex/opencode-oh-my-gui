@@ -1,4 +1,3 @@
- 
 import { Show } from 'solid-js'
 import { usePlugin, type MountedSession } from '@opencode/plugin/gui'
 import type { definition } from './definition'
