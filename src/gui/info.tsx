@@ -3,7 +3,7 @@ import { For, Show, createEffect, createSignal, onCleanup } from 'solid-js'
 import { usePlugin } from '@opencode/plugin/gui'
 import type { MountedSession } from '@opencode/plugin/gui'
 import type { definition } from './definition'
-import { DashboardRpc } from '../rpc'
+import { dashboardRpc } from './dashboard-rpc'
 import type { GoalState } from './goal-rpc'
 import {
 	buildStoreDiagnostics,
@@ -52,10 +52,10 @@ export function InfoView(props: { session: MountedSession }) {
 
 	const copyDiagnostics = async () => {
 		try {
-			const client = ctx.client.rpc(DashboardRpc)
+			const rpc = dashboardRpc(props.session, ctx.client)
 			const [ctxRes, hk] = await Promise.all([
-				client.context({ sessionID: props.session.id }).catch(() => null),
-				client.hooks({ sessionID: props.session.id, limit: 50 }).catch(() => null),
+				rpc.context({ sessionID: props.session.id }).catch(() => null),
+				rpc.hooks({ sessionID: props.session.id, limit: 50 }).catch(() => null),
 			])
 			const store = buildStoreDiagnostics(props.session, goal())
 			const bundle = {

@@ -19,7 +19,7 @@ import {
 import { Show, createEffect, createSignal } from 'solid-js'
 import type { Plugin } from '@opencode/plugin/gui'
 import type { definition } from './definition'
-import { DashboardRpc } from '../rpc'
+import { dashboardRpc } from './dashboard-rpc'
 import { ContextView } from './context'
 import { AgentsView } from './agents'
 import { HooksView } from './hooks'
@@ -264,12 +264,13 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 			if (!session) return
 			try {
 				ensureStoreSynced(session)
-				const client = ctx.client.rpc(DashboardRpc)
+				const rpc = dashboardRpc(session, ctx.client)
+				const client = session.server?.client ?? ctx.client
 				const [ctxRes, hk, goal] = await Promise.all([
-					client.context({ sessionID: session.id }).catch(() => null),
-					client.hooks({ sessionID: session.id, limit: 50 }).catch(() => null),
+					rpc.context({ sessionID: session.id }).catch(() => null),
+					rpc.hooks({ sessionID: session.id, limit: 50 }).catch(() => null),
 					new Promise<unknown>((resolve) => {
-						const stop = subscribeGoal(ctx.client as any, session.id, (g) => {
+						const stop = subscribeGoal(client as any, session.id, (g) => {
 							stop()
 							resolve(g)
 						})
@@ -320,10 +321,13 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 			Math.min(100, Number((ctx.stores.prefs.value as any).contextWarnAt) || 0),
 		)
 		if (warnAt <= 0) return
-		if (share < warnAt) {
+		// Only clear after dropping well below the threshold so noisy % flicker
+		// around the warn line does not re-fire the toast every few frames.
+		if (share < warnAt - 5) {
 			contextWarned.delete(sessionID)
 			return
 		}
+		if (share < warnAt) return
 		if (contextWarned.has(sessionID)) return
 		contextWarned.add(sessionID)
 		try {
@@ -439,6 +443,8 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 	/** Per-session listed jobs (for image/codemode pill counts and cross-session notify). */
 	const [listedBySession, setListedBySession] = createSignal<Record<string, JobRow[]>>({})
 	const seenJobs = new Map<string, Map<string, { label: string; kind: string }>>()
+	/** Whether the last notify pass treated this session as focused (had live background). */
+	const seenJobsFocused = new Map<string, boolean>()
 
 	const pollListedJobs = async () => {
 		const refs = ctx.sessions.list()
@@ -472,12 +478,15 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 		const refs = ctx.sessions.list()
 		const listed = listedBySession()
 		const currentMounted = ctx.sessions.current()
+		const focusedKey = currentMounted?.key
 
 		for (const ref of refs) {
-			const liveRows =
-				currentMounted && currentMounted.key === ref.key
-					? (currentMounted.background ?? []).map((t) => jobFromLive(t, ref.id))
-					: []
+			const focused = focusedKey === ref.key
+			// `MountedSession.background` is empty once another session is routed, so
+			// only trust live rows for the focused tab. Unfocused tabs use history.
+			const liveRows = focused
+				? (currentMounted!.background ?? []).map((t) => jobFromLive(t, ref.id))
+				: []
 			const hist = listed[ref.key] ?? []
 			const liveIds = new Set(liveRows.map((r) => r.id))
 			const running = new Map<string, { label: string; kind: string }>()
@@ -498,13 +507,27 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 				seenJobs.set(ref.key, running)
 				continue
 			}
+
+			// Session just lost focus: live background clears to []. Merge so we do
+			// not treat every still-running job as finished.
+			const wasFocused = seenJobsFocused.get(ref.key) === true
+			if (wasFocused && !focused) {
+				for (const [id, meta] of prev) {
+					if (!running.has(id)) running.set(id, meta)
+				}
+				seenJobsFocused.set(ref.key, false)
+				seenJobs.set(ref.key, running)
+				continue
+			}
+			seenJobsFocused.set(ref.key, focused)
+
 			if (notify) {
 				for (const [id, meta] of prev) {
 					if (running.has(id)) continue
 					void ctx.attention.notify({
 						title: ctx.t('toast.jobs.done'),
 						message: ctx.t('toast.jobs.done.message', {
-							label: `${meta.kind}: ${meta.label}`,
+							detail: `${meta.kind}: ${meta.label}`,
 						}),
 						session: { server: ref.server.id, id: ref.id },
 						id: `${ctx.id}:job:${id}`,
@@ -516,7 +539,10 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 
 		const openKeys = new Set(refs.map((r) => r.key))
 		for (const key of [...seenJobs.keys()]) {
-			if (!openKeys.has(key)) seenJobs.delete(key)
+			if (!openKeys.has(key)) {
+				seenJobs.delete(key)
+				seenJobsFocused.delete(key)
+			}
 		}
 	})
 
@@ -561,7 +587,7 @@ export const setup: Plugin.Setup<typeof definition> = (ctx) => {
 					void ctx.attention.notify({
 						title: ctx.t('toast.waiting'),
 						message: ctx.t('toast.waiting.message', {
-							label: `${item.kind}: ${item.title}`,
+							detail: `${item.kind}: ${item.title}`,
 						}),
 						session: { server: ref.server.id, id: ref.id },
 						id: `${ctx.id}:waiting:${item.id}`,
@@ -844,7 +870,11 @@ function SettingsView(props: { target?: string; ui: any }) {
 		const maxHooks = Math.max(20, Math.min(2000, Math.floor(value) || 200))
 		setPref({ maxHooks })
 		try {
-			await ctx.client.rpc(DashboardRpc).config({ maxHooks })
+			const session = ctx.sessions.current()
+			const rpc = session
+				? dashboardRpc(session, ctx.client)
+				: dashboardRpc({ id: '', directory: '' }, ctx.client)
+			await rpc.config({ maxHooks })
 			setConfigNotice(`Server hook retention: ${maxHooks}`)
 		} catch (err) {
 			setConfigNotice(err instanceof Error ? err.message : String(err))

@@ -3,7 +3,7 @@ import { For, Show, createEffect, createSignal } from 'solid-js'
 import { usePlugin } from '@opencode/plugin/gui'
 import type { MountedSession } from '@opencode/plugin/gui'
 import type { definition } from './definition'
-import { DashboardRpc } from '../rpc'
+import { dashboardRpc } from './dashboard-rpc'
 import { createSessionPoll } from './poll'
 import { SERIES, pctTone, tok } from './tokens'
 import { formatCost, formatTokens, readCompaction, readSessionUsage } from './usage'
@@ -58,16 +58,15 @@ export function ContextView(props: { session: MountedSession }) {
 		if (refreshing()) return 'skipped'
 		setRefreshing(true)
 		try {
-			const result = (await withTimeout(
-				ctx.client.rpc(DashboardRpc).context({ sessionID }),
-				8000,
-			)) as { rows?: unknown }
+			const rpc = dashboardRpc(props.session, ctx.client)
+			const result = (await withTimeout(rpc.context({ sessionID }), 8000)) as {
+				rows?: unknown
+			}
 			if (disposed()) return 'skipped'
 			setRows(Array.isArray(result.rows) ? result.rows : [])
-			const h = (await ctx.client
-				.rpc(DashboardRpc)
-				.health({ sessionID })
-				.catch(() => null)) as { data?: unknown } | null
+			const h = (await rpc.health({ sessionID }).catch(() => null)) as {
+				data?: unknown
+			} | null
 			if (disposed()) return 'skipped'
 			setHealth(h?.data ?? null)
 			setError('')

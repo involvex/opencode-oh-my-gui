@@ -3,7 +3,7 @@ import { For, Show, createSignal } from 'solid-js'
 import { usePlugin } from '@opencode/plugin/gui'
 import type { MountedSession } from '@opencode/plugin/gui'
 import type { definition } from './definition'
-import { DashboardRpc } from '../rpc'
+import { dashboardRpc } from './dashboard-rpc'
 import { createSessionPoll } from './poll'
 import { tok } from './tokens'
 
@@ -50,7 +50,7 @@ export function HooksView(props: { session: MountedSession }) {
 				Math.min(500, Number((ctx.stores.prefs.value as any).hooksFetchLimit) || 80),
 			)
 			const result = (await withTimeout(
-				ctx.client.rpc(DashboardRpc).hooks({ sessionID, limit }),
+				dashboardRpc(props.session, ctx.client).hooks({ sessionID, limit }),
 				8000,
 			)) as any
 			if (disposed()) return 'skipped'
@@ -117,7 +117,9 @@ export function HooksView(props: { session: MountedSession }) {
 
 	const clear = async () => {
 		try {
-			await ctx.client.rpc(DashboardRpc).clearHooks({ sessionID: props.session.id })
+			await dashboardRpc(props.session, ctx.client).clearHooks({
+				sessionID: props.session.id,
+			})
 			setEntries([])
 			setNotice('Cleared')
 		} catch (err) {
