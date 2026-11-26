@@ -795,13 +795,16 @@ function PanelShell(props: { session: MountedSession }) {
 				gap: '8px',
 				padding: '10px',
 				'font-size': '12px',
+				height: '100%',
+				'min-height': 0,
+				overflow: 'hidden',
 			}}
 		>
 			<div
 				role="tablist"
 				aria-label="Oh My GUI sections"
 				onKeyDown={onTabKeyDown}
-				style={{ display: 'flex', gap: '6px', 'flex-wrap': 'wrap' }}
+				style={{ display: 'flex', gap: '6px', 'flex-wrap': 'wrap', 'flex-shrink': 0 }}
 			>
 				<Show when={visible('context')}>
 					<TabButton id="context" label={ctx.t('tab.context')} />
@@ -822,7 +825,7 @@ function PanelShell(props: { session: MountedSession }) {
 					<TabButton id="info" label={ctx.t('tab.info')} />
 				</Show>
 			</div>
-			<div>
+			<div style={{ flex: 1, 'min-height': 0, 'min-width': 0, 'overflow-y': 'auto' }}>
 				<Show when={tab() === 'context' && visible('context')}>
 					<div id="oh-my-gui-panel-context" role="tabpanel">
 						<ContextView session={props.session} />
